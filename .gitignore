@@ -1,0 +1,27 @@
+# Ignore log files and temporary files
+*.log
+*.tmp
+*.dat
+*.mdl
+*.msg
+*.nmp
+*.pac
+*.prt
+*.res
+*.rpt
+*.sel
+*.sta
+*.stt
+
+# Ignore Abaqus files
+*.abq
+*.com
+*.inp
+*.rpy
+*.acis.log
+
+#ignore scratch files
+scratch.py
+
+# Ignore specific directories
+wd_dev/
