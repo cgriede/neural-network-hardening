@@ -5,16 +5,12 @@ import utils as ut
 import torch.optim as optim
 import numpy as np
 import torch
-import os
-import random
-import copy
-from torch.utils.tensorboard import SummaryWriter
 import argparse
 import sys
 from sklearn.preprocessing import MinMaxScaler
 import pandas as pd
 from datetime import datetime, timedelta
-import time
+import os
 
 
 
@@ -76,6 +72,7 @@ def train_strain_normalized(model,
     debug_grad_epoch = []
     clips_epoch = 0
     grad_list_unclipped = []
+    fail_counter = 0
 
     SCALE_INPUT = True
     if SCALE_INPUT == True:
@@ -122,7 +119,6 @@ def train_strain_normalized(model,
         scaler_output.data_max_ = np.array([data_max])
         scaler_output.data_range_ = np.array([data_max - data_min])
         
-    #min_max scaler for gradient 
 
     for n in range(epoch):
         start_time_epoch = datetime.now()
@@ -147,7 +143,30 @@ def train_strain_normalized(model,
 
         #append the material tensor to the kNN list for the summary plot    
         kNN_epoch.append(mat_tensor)
+        
         loss_df, element_dict = ut.simulator(mat_tensor, working_directory, expname, run_simulation=run_sim, num_cpus=num_cpus)
+
+        ABORT = False
+        abort_file = False
+        os.listdir(working_directory)
+        for file in os.listdir(working_directory):
+            if 'ABORT' in file:
+                abort_file = True
+        #check for aborted simulation
+        if (loss_df.empty, element_dict) == (True, False):
+            ABORT = True
+        #check for abort file
+        if abort_file:
+            ABORT = True
+        #abort training if conditions are met
+        if ABORT:
+            print('ABORTING TRAINING')
+            return loss_epoch, kNN_epoch, force_error_epoch, debug_grad_epoch
+        
+
+        # Record the time for the simulator
+        end_time_simulator = datetime.datetime.now()
+        
         #append the force error to the force error list for the summary plot
         force_error_epoch.append(loss_df)
 
@@ -265,9 +284,7 @@ def train_strain_normalized(model,
 
         optimizer.step()
 
-
-        #filtered_elements_ratio = len(filtered_elements)/len(element_dict)
-        #print(f'filtered elements ratio: {filtered_elements_ratio}')        
+     
 
         end_time_epoch = datetime.now()
 
@@ -370,7 +387,6 @@ if __name__ == '__main__':
 
 
 
-
     '''Set the variables for the training loop'''
     #working directory
     working_directory = 'wd_dev'
@@ -378,8 +394,6 @@ if __name__ == '__main__':
     archive_directory = 'archive_dev'
     #experiment name for the abaqus simulation
     expname = 'H_10'
-    #set the random seed
-    torch.manual_seed(37)
 
 
     #set strain tensor
@@ -413,9 +427,6 @@ if __name__ == '__main__':
     }
 
     # Define the learning rates to test
-    learning_rates = [0.2, 0.1, 0.01]
-    # Define the clip values to test
-    clip_values = [10**6, 10**5, 10**4]
 
     '''
 
@@ -439,12 +450,22 @@ if __name__ == '__main__':
         num_cpus = 4
 
     #set number of training epochs
-    epoch = 5
+    epoch = 1
+
+    #set the random seed
+    torch.manual_seed(37)
 
     # Define the models to test
-    models = {
-        'SimpleModel': SimpleModel()
-    }
+    model = SimpleModel()
+    model_type = '4_layer_tanh_softplus'
+
+
+    # Define the learning rate
+    lr = 0.001
+
+    # Define the optimizer
+    optimizer = optim.RMSprop(model.parameters(), lr=lr)
+    optim_type = 'RMSprop'
 
     #wheter to update inp and run simulation (turn off for debugging, Abaqus not installed)
     RUN_SIM = True
@@ -455,53 +476,39 @@ if __name__ == '__main__':
     #wheter to clean the working directory after each epoch
     CLEAN = True
 
-    # Define the learning rates to test
-    learning_rates = [0.005, 0.001]
-
-
-
-    # Define the clip values to test
-    clip_values = [None]
-
 
     #set debug mode
-    DEBUG = False
+    DEBUG = True
     if DEBUG:
-        RUN_SIM = False
+        RUN_SIM = True
         CLEAN = False
         epoch = 1    
 
     
     if TRAIN:
-        for model_type, model in models.items():
-            print(f'\nTraining model: {model_type}')
-            for lr in learning_rates:
-                optimizers ={
-        'Adam'        : optim.Adam(model.parameters(), lr=lr,),
-}
-                for optim_type, optimizer in optimizers.items():
-                    test_name = f'{model_type}_{optim_type}_{lr}_nepochs_{epoch}'
+        #SET TEST NAME
+        test_name = f'{model_type}_{optim_type}_{lr}_nepochs_{epoch}'
 
-                    #main training loop
-                    
-                    (
-                    loss_epoch,
-                    kNN_epoch,
-                    force_error_epoch,
-                    debug_grad_epoch
-                    ) = train_strain_normalized(model=model,
-                                                                                                        working_directory=working_directory,
-                                                                                                        expname=expname,
-                                                                                                        strain_tensor=strain_tensor,
-                                                                                                        epoch=epoch,
-                                                                                                        num_cpus=num_cpus,
-                                                                                                        optimizer=optimizer,
-                                                                                                        run_sim=RUN_SIM)
-                    
-                    #summary writer
-                    summary = ut.testrun_summary_writer(loss_epoch, force_error_epoch, kNN_epoch, test_name, test_description,
-                                                    optimizer, train_loop_description, expname, lr, epoch,
-                                                    archive_directory,debug_grad_epoch, model)
+        #main training loop
+        
+        (
+        loss_epoch,
+        kNN_epoch,
+        force_error_epoch,
+        debug_grad_epoch
+        ) = train_strain_normalized(model=model,
+                                                                                            working_directory=working_directory,
+                                                                                            expname=expname,
+                                                                                            strain_tensor=strain_tensor,
+                                                                                            epoch=epoch,
+                                                                                            num_cpus=num_cpus,
+                                                                                            optimizer=optimizer,
+                                                                                            run_sim=RUN_SIM)
+        
+        #summary writer
+        summary = ut.testrun_summary_writer(loss_epoch, force_error_epoch, kNN_epoch, test_name, test_description,
+                                        optimizer, train_loop_description, expname, lr, epoch,
+                                        archive_directory,debug_grad_epoch, model)
 
 
     

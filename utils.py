@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg')
+
 import os
 import re
 import time
@@ -193,7 +196,7 @@ class AbaqusFunc:
             print("There is a running simulation / existing lock file")
             lock = True
 
-        command = f"abaqus job={job_name} input={input_file} double cpus={self.num_cpus} ask_delete=OFF history=odb"
+        command = f"abaqus job={job_name} input={input_file} double cpus={self.num_cpus} ask_delete=OFF history=odb background"
 
         try:
             process = subprocess.Popen(command, shell=True, cwd=self.working_directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -826,8 +829,73 @@ class AbaqusOutputFile:
             self.model_data_df = df1_interpolated.reindex(df2.index).reset_index()
             df2 = df2.reset_index()
 
+import os
+import re
 
-def simulator(mat_prop_tensor, working_directory, name, run_simulation = False, num_cpus = 6):
+import fnmatch
+
+def abaqus_runtime_status(directory_name, sim_name):
+    """
+    Return the status of an Abaqus simulation that has been called
+    via the command line, based on the .log and .lck files 
+    that have been created. For this function to work the simulation must
+    have been called with the 'background' option turned on, so that a .log
+    file is created.
+
+    It is possible for the status to be unsuccessfully finished while the
+    simulation has not started yet, depending on the timing of files
+    appearing or disappearing. In order to definitively decide that a
+    simulation has terminated without success it is advised to check that its
+    status is 'UNSUCCESSFULLY_FINISHED' for several consecutive calls of this function.
+    """
+    original_dir = os.getcwd()
+    os.chdir(directory_name)
+    
+    namelck = f"{sim_name}.lck"
+    namelog = f"{sim_name}.log"
+    nameslurm = f"{sim_name}_slurm.log"
+
+    # Check for exception files
+    exception_pattern = "explicit_dp.*.exception"
+    exception_files = fnmatch.filter(os.listdir(os.getcwd()), exception_pattern)
+    
+    # Check if log file exists
+    if not os.path.exists(namelog):
+        status = 'NOT_STARTED'
+    if exception_files:
+        status = 'UNSUCCESSFULLY_FINISHED'
+    else:
+        # Check if lock file exists
+        if not os.path.exists(namelck):
+            with open(namelog, 'r') as file:
+                textlog = file.read()
+            if 'COMPLETED' not in textlog:
+                status = 'UNSUCCESSFULLY_FINISHED'
+            else:
+                status = 'SUCCESSFULLY_FINISHED'
+        else:
+            # Lock file exists; simulation is either running or waiting for licenses,
+            # unless slurm has failed, in which case the slurm error log file will have content
+            failed_from_slurm = False
+            if os.path.exists(nameslurm):
+                if os.path.getsize(nameslurm) > 0:
+                    failed_from_slurm = True
+            if not failed_from_slurm:
+                with open(namelog, 'r') as file:
+                    textlog = file.read()
+                if 'Abaqus License Manager checked out the following licenses:' not in textlog:
+                    status = 'QUEUED_FOR_LICENSE'
+                else:
+                    status = 'RUNNING'
+            else:
+                status = 'UNSUCCESSFULLY_FINISHED'
+    
+    os.chdir(original_dir)
+    return status
+
+
+
+def simulator(mat_prop_tensor, working_directory, name, run_simulation = False, num_cpus = 4):
     """
     input: MatProp Tensor, Name: e.g. H_5, 
     output: Tensor with values: "displacement" "Simulated Force" "Real Force"
@@ -848,23 +916,42 @@ def simulator(mat_prop_tensor, working_directory, name, run_simulation = False, 
     plastic_scalars_df[element]: MISES, PEEQ, S11, S22, S33, Area_xy
     """
 
-
     start_time = datetime.now()
     if run_simulation:
-        print(f"Running simulation for {name}, Run_simulation = {run_simulation}")
         inp = AbaqusInputFile(working_directory, name)
         inp.change_plastic(mat_prop_tensor)
         inp.write_file()
         abq = AbaqusFunc(working_directory=working_directory, name=name, num_cpus=num_cpus)
-        abq.run_simulation()
+
+        fail_counter = 0
+        ABORT = False
+        status = 'NOT_STARTED'
+        while status != 'SUCCESSFULLY_FINISHED':
+            print(f"Running simulation for {name}, Run_simulation = {run_simulation}")
+            abq.run_simulation()
+            job_log_path = file_picker(working_directory, name, '.log')
+            job_name = os.path.basename(job_log_path).split('.')[0]
+            status = abaqus_runtime_status(working_directory, job_name)
+            if status != 'SUCCESSFULLY_FINISHED':
+                print(f'simulation failed {fail_counter + 1} times, repeating simulation for {name}')
+                fail_counter += 1
+
+                #move the exception file to error_log folder if it exists
+                exception_pattern = "explicit_dp.*.exception"
+                exception_files = fnmatch.filter(os.listdir(working_directory), exception_pattern)
+                if exception_files:
+                    for file in exception_files:
+                        shutil.move(os.path.join(working_directory, file), os.path.join(working_directory, 'error_log', file))
+                #for 5 consecutive fails, abort the simulation process        
+                if fail_counter > 4:
+                    print(f"Simulation failed for {name} after 5 attempts, sending abort signal")
+                    return pd.DataFrame(), {}
+    
         print(f'time for simulation: {datetime.now() - start_time}')
         start_time_extract = datetime.now()
         abq.extract_output()
-        print(f'time for odb extraction: {datetime.now() - start_time_extract}')
+        print(f'time for output extraction: {datetime.now() - start_time_extract}')
 
-    else:
-        print(f"DEBUGGING MODE: No simulation run for {name}, Run_simulation = {run_simulation}")  
-    
     outp = AbaqusOutputFile(working_directory, name)
     df2 = outp.model_data_df
 
@@ -903,6 +990,9 @@ class testrun_summary_writer():
             count += 1
         os.makedirs(self.out_dir)
 
+        if (loss_epoch, loss_df_list, mat_tensor_list) == (None, None, None):
+            raise ValueError("loss_epoch, loss_df_list, mat_tensor_list cannot be None")
+            
         self.save_debug_frames()
         self.epoch_loss_plt()
         self.epoch_logloss_plt()
@@ -913,7 +1003,7 @@ class testrun_summary_writer():
 
     def color_picker(self, epoch):
         colormap = plt.cm.viridis  # You can choose any colormap you like
-        total_epochs = len(self.loss_epoch)
+        total_epochs = self.number_of_epochs
         return colormap(epoch / total_epochs)
 
     def save_debug_frames(self):
@@ -1044,7 +1134,7 @@ class testrun_summary_writer():
 
 def cleaner(working_directory):
     expname_list = ['H_10', 'H_50', 'C_20']
-    keep = ['exp_data', 'exp_data_original', 'exp_data_simulated'] + [f'{expname}_000.inp' for expname in expname_list]
+    keep = ['exp_data', 'exp_data_original', 'exp_data_simulated', 'error_log'] + [f'{expname}_000.inp' for expname in expname_list]
     files = os.listdir(working_directory)
 
     # Delete unwanted files and directories
@@ -1211,3 +1301,67 @@ def histogram_plotter(list, num_bins, title, xlabel, ylabel, save_path):
     plt.ylabel(ylabel)
     plt.savefig(save_path)
     plt.close()
+
+def more_epoch_histograms(archive, df_column, num_bins, title, xlabel, ylabel, save_path):
+    #archive = (r"D:\Bachelor_Thesis_Cedric_Grieder\Code\dont_change_working_code\template_for_cluster\archive_dev\20240801_17_0_SimpleModel_Adam_0.001_nepochs_100/debug")
+    assert len(df_column.split(' ')) == 1, 'only one column allowed, no whitespaces'
+    
+    os.chdir(archive)
+    for file in os.listdir(archive):
+        print(f'file: {file}')
+        if file.endswith('.csv'):
+            print(f'reading {file}')
+            df = pd.read_csv(file)
+            strain_list = df[df_column].tolist()
+            epoch = 1 + int((file.split('_')[-1]).split('.')[0])
+            histogram_plotter(list =strain_list, num_bins= num_bins,
+                            title=f'{df_column} histogram epoch: {epoch}', xlabel={df_column}, ylabel='frequency',
+                            save_path=os.path.join(archive, f'{file}_{df_column}_hist.png'))
+            print(f'histogram saved to {os.path.join(archive, f"{file}_strain_hist.png")}')
+
+def evaluate_data_failed_job(file_path):
+    """
+    Reads data from result file in the specified format and creates a DataFrame
+    containing all the information over all epochs.
+    """
+    with open(file_path, 'r') as file:
+        data = file.read()
+
+    # Regular expression to match the required sections
+    pattern = re.compile(
+        r"Epoch \[(\d+)/(\d+)\], Loss: ([\d.]+),\n"
+        r"Mean Grad: ([\d.-]+), Median: ([\d.-]+)\n"
+        r"clipped gradients: (\d+)\n"
+        r"%of clipped gradients: ([\d.]+)\n"
+        r"time: ([\d-]+ [\d:.]+)\n"
+        r"time total epoch: ([\d:]+)\n"
+        r"time for simulator: ([\d:]+)\n"
+        r"time for backprop: ([\d:]+)\n"
+        r"total training time: ([\d:]+)"
+    )
+
+    # List to store the extracted data
+    data_list = []
+
+    # Find all matches and store them in the list
+    for match in pattern.finditer(data):
+        epoch_data = {
+            "Epoch": int(match.group(1)),
+            "Total Epochs": int(match.group(2)),
+            "Loss": float(match.group(3)),
+            "Mean Grad": float(match.group(4)),
+            "Median Grad": float(match.group(5)),
+            "Clipped Gradients": int(match.group(6)),
+            "% Clipped Gradients": float(match.group(7)),
+            "Time": match.group(8),
+            "Time Total Epoch": match.group(9),
+            "Time for Simulator": match.group(10),
+            "Time for Backprop": match.group(11),
+            "Total Training Time": match.group(12)
+        }
+        data_list.append(epoch_data)
+
+    # Create a DataFrame from the list
+    df = pd.DataFrame(data_list)
+
+    return df
