@@ -165,7 +165,7 @@ def train_strain_normalized(model,
         
 
         # Record the time for the simulator
-        end_time_simulator = datetime.datetime.now()
+        end_time_simulator = datetime.now()
         
         #append the force error to the force error list for the summary plot
         force_error_epoch.append(loss_df)
@@ -480,7 +480,7 @@ if __name__ == '__main__':
     #set debug mode
     DEBUG = True
     if DEBUG:
-        RUN_SIM = True
+        RUN_SIM = False
         CLEAN = False
         epoch = 1    
 

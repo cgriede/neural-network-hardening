@@ -6,7 +6,7 @@ import re
 import time
 import torch
 import shutil
-import threading
+import fnmatch
 import subprocess
 import numpy as np
 import pandas as pd
@@ -15,7 +15,6 @@ from datetime import datetime
 from collections import OrderedDict
 from multiprocessing import Pool
 from matplotlib import cm
-import math
 
 def gradient_scaler(grad: np.array) -> np.array:
     """
@@ -462,7 +461,7 @@ class AbaqusOutputFile:
         self.get_element_info()
 
         time_calc_area = datetime.now()
-        self.calc_area()
+        self.calc_area2()
         print(f"Time to calculate area: {datetime.now() - time_calc_area}")
 
         #align element and model data (plastic scalars / force-displacement)
@@ -480,57 +479,8 @@ class AbaqusOutputFile:
         except ValueError:
             return False
   
-    #this is the old function for calculating the area of a quadrilateral,
-    # which is dependant on the order of the vertices
-    def __old__calculate_quadrilateral(vertex1, vertex2, vertex3, vertex4):
-        def calculate_triangle_area(vertex1, vertex2, vertex3):
-            x1, y1 = vertex1
-            x2, y2 = vertex2
-            x3, y3 = vertex3
-            area = 0.5 * abs(x1*(y2 - y3) + x2*(y3 - y1) + x3*(y1 - y2))
-            return area
-        # Calculate area of triangle ABC
-        area_ABC = calculate_triangle_area(vertex1, vertex2, vertex3)
-        
-        # Calculate area of triangle ACD
-        area_ACD = calculate_triangle_area(vertex1, vertex3, vertex4)
-        
-        # Total area is the sum of the areas of the two triangles
-        total_area = area_ABC + area_ACD
-        
-        return total_area
     
-    @staticmethod
-    def calculate_quadrilateral_area(vertex1, vertex2, vertex3, vertex4):
-        def calculate_triangle_area(v1, v2, v3):
-            x1, y1 = v1
-            x2, y2 = v2
-            x3, y3 = v3
-            return 0.5 * abs(x1*(y2 - y3) + x2*(y3 - y1) + x3*(y1 - y2))
 
-        def sort_vertices(vertices):
-            # Calculate centroid
-            centroid_x = sum(x for x, y in vertices) / 4
-            centroid_y = sum(y for x, y in vertices) / 4
-            
-            # Sort points by angle with respect to the centroid
-            vertices.sort(key=lambda point: math.atan2(point[1] - centroid_y, point[0] - centroid_x))
-            return vertices
-
-        # Sort vertices to ensure consistent order
-        sorted_vertices = sort_vertices([vertex1, vertex2, vertex3, vertex4])
-
-        # Unpack sorted vertices
-        v1, v2, v3, v4 = sorted_vertices
-
-        # Calculate areas of the two triangles formed by the vertices
-        area_ABC = calculate_triangle_area(v1, v2, v3)
-        area_ACD = calculate_triangle_area(v1, v3, v4)
-
-        # Total area is the sum of the areas of the two triangles
-        total_area = area_ABC + area_ACD
-        
-        return total_area
     
     @staticmethod
     def dS33_dSvm(S11, S22, S33, Svm):
@@ -739,45 +689,74 @@ class AbaqusOutputFile:
                     if df['PEEQ'].max() > threshold:
                         self.element_data[element_id] = {'plastic_scalars_df': df, 'nodes': {}}
 
-    def calc_area(self):
-        # Calculate area for each element and timestep
-        # Create an empty DataFrame to store the results
-        result_df = pd.DataFrame()
 
+    def calc_area2(self):
+        # Calculate area for each element and timestep
         for element_id, data in self.element_data.items():
-            #iterate over dataframe of element (timepoints)
-            for index, row in data['plastic_scalars_df'].iterrows():
-                
+            plastic_scalars_df = data['plastic_scalars_df']
+            nodes = data['nodes']
+            
+            # Precompute node coordinates
+            node_coords = {node_id: np.array(coords['node_coord']) for node_id, coords in nodes.items()}
+            
+            # Initialize result DataFrame
+            result_df = pd.DataFrame(index=plastic_scalars_df.index)
+            
+            # Extract displacements for all nodes and timepoints
+            displacements = {node_id: self.node_data[node_id][['U1', 'U2']].values for node_id in nodes.keys()}
+            
+            # Iterate over timepoints
+            for index in plastic_scalars_df.index:
                 x_list = []
                 y_list = []
 
-                #iterate over nodes
-                for node_id, coords in data['nodes'].items():
-                    coords = coords['node_coord']  
-                    x0, y0 = coords[0], coords[1]
-                    x = x0 + self.node_data[node_id].loc[index, 'U1']
-                    y = y0 + self.node_data[node_id].loc[index, 'U2']
+                # Compute new coordinates for each node
+                for node_id, coords in node_coords.items():
+                    displacement = displacements[node_id][index]
+                    x, y = coords[:2] + displacement
                     x_list.append(x)
                     y_list.append(y)
 
                 assert len(x_list) == 4, f"element: {element_id} has not 4 nodes, but {len(x_list)} nodes"
 
-                x1, y1 = x_list[0], y_list[0]
-                x2, y2 = x_list[1], y_list[1]
-                x3, y3 = x_list[2], y_list[2]
-                x4, y4 = x_list[3], y_list[3]
+                # Convert lists to NumPy arrays for vectorized operations
+                x_array = np.array(x_list)
+                y_array = np.array(y_list)
 
-                p1 = x1, y1
-                p2 = x2, y2
-                p3 = x3, y3
-                p4 = x4, y4
+                # Sort points counterclockwise
+                x_array, y_array = self.sort_points_counterclockwise2(x_array, y_array)
 
-                area_xy = self.calculate_quadrilateral_area(p1, p2, p3, p4)
+                # Calculate area using vectorized operations
+                area_xy = self.calculate_quadrilateral_area2(x_array, y_array)
                 result_df.loc[index, 'Area_XY'] = area_xy
 
-            assert result_df.shape[0] == self.element_data[element_id]['plastic_scalars_df'].shape[0], 'node df has not same size as plastic_scalars_df'
-            #add area df to plastic_scalars df
-            self.element_data[element_id]['plastic_scalars_df'] = pd.concat([self.element_data[element_id]['plastic_scalars_df'], result_df], axis=1)
+            assert result_df.shape[0] == plastic_scalars_df.shape[0], 'node df has not same size as plastic_scalars_df'
+            
+            # Add area DataFrame to plastic_scalars DataFrame
+            self.element_data[element_id]['plastic_scalars_df'] = pd.concat([plastic_scalars_df, result_df], axis=1)
+
+    def sort_points_counterclockwise2(self, x_array, y_array):
+        # Calculate the centroid
+        centroid_x = np.mean(x_array)
+        centroid_y = np.mean(y_array)
+        
+        # Calculate the angle of each point relative to the centroid
+        angles = np.arctan2(y_array - centroid_y, x_array - centroid_x)
+        
+        # Sort points by angle
+        sorted_indices = np.argsort(angles)
+        return x_array[sorted_indices], y_array[sorted_indices]
+
+    def calculate_quadrilateral_area2(self, x_array, y_array):
+        # Assuming the points are ordered correctly, calculate the area
+        # Using the Shoelace formula for a quadrilateral
+        return 0.5 * np.abs(
+            x_array[0] * y_array[1] + x_array[1] * y_array[2] + 
+            x_array[2] * y_array[3] + x_array[3] * y_array[0] -
+            (y_array[0] * x_array[1] + y_array[1] * x_array[2] + 
+            y_array[2] * x_array[3] + y_array[3] * x_array[0])
+        )
+
 
     def calc_partial_derivative(self):
     #calculate dS33/dSvm and insert to df
@@ -829,10 +808,6 @@ class AbaqusOutputFile:
             self.model_data_df = df1_interpolated.reindex(df2.index).reset_index()
             df2 = df2.reset_index()
 
-import os
-import re
-
-import fnmatch
 
 def abaqus_runtime_status(directory_name, sim_name):
     """
