@@ -25,3 +25,4 @@ scratch.py
 
 # Ignore specific directories
 wd_dev/
+archive_dev/
