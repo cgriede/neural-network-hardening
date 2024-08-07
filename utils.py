@@ -4,6 +4,7 @@ matplotlib.use('Agg')
 import os
 import re
 import time
+import sys
 import torch
 import shutil
 import fnmatch
@@ -11,6 +12,8 @@ import subprocess
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from typing import List, Union
+from typing import List, Union
 from datetime import datetime
 from collections import OrderedDict
 from multiprocessing import Pool
@@ -932,6 +935,7 @@ def simulator(mat_prop_tensor, working_directory, name, run_simulation = False, 
 
     return df2, outp.element_data
 
+"""
 class testrun_summary_writer():
     def __init__(self, loss_epoch, loss_df_list, mat_tensor_list, test_name,
                  test_description, optimizer, train_loop_description, expname,
@@ -1106,6 +1110,423 @@ class testrun_summary_writer():
             report.write(f'Learn Rate: {self.learning_rate}\n')  
             report.write(f'Number of Epochs: {self.number_of_epochs}\n') 
             report.write(f'Train Loop Description: {self.train_loop_description}\n\n')
+
+"""
+
+
+class TestrunSummaryWriter:
+    def __init__(self, test_name, test_description, optimizer, train_loop_description, expname,
+                 learning_rate, number_of_epochs, archive_directory, working_directory, model):
+        
+        # Inputs for the report
+        self.test_name = test_name
+        self.test_description = test_description
+        self.optimizer = optimizer
+        self.train_loop_description = train_loop_description
+        self.expname = expname
+        self.learning_rate = learning_rate
+        self.number_of_epochs = number_of_epochs
+        self.archive_directory = archive_directory
+        self.working_directory = working_directory
+        self.model = model
+        
+        # Initialize empty lists for metrics
+        self.loss_epoch_list = []
+        self.loss_df_list = []
+        self.mat_tensor_list = []
+        self.backprop_element_df_list = []
+        self.filtered_elements_list = []
+        self.model_list = []
+        self.local_minima_epochs = []
+        
+        # Generate subdirectory in the archive directory
+        date = datetime.now().strftime('%Y%m%d_%H')
+        count = 0
+        while True:
+            self.out_dir = os.path.join(archive_directory, f"{date}_{count}_{self.test_name}")
+            if not os.path.exists(self.out_dir):
+                break
+            count += 1
+        os.makedirs(self.out_dir)
+
+        self.parent_out_directory = self.out_dir
+
+
+    def calculate_memory_usage(self):
+        total_memory = 0
+
+        # Calculate memory usage for loss_epoch_list (floats)
+        size_loss_epoch = sum(sys.getsizeof(item) for item in self.loss_epoch_list)
+        total_memory += size_loss_epoch
+
+        # Calculate memory usage for loss_df_list (DataFrames)
+        size_loss_df = sum(sys.getsizeof(df) + df.memory_usage(index=True).sum() for df in self.loss_df_list)
+        total_memory += size_loss_df
+
+        # Calculate memory usage for mat_tensor_list (tensors)
+        size_mat_tensor = sum(sys.getsizeof(tensor) + tensor.element_size() * tensor.nelement() for tensor in self.mat_tensor_list)
+        total_memory += size_mat_tensor
+
+        # Calculate memory usage for backprop_element_df_list (DataFrames)
+        size_backprop_element_df = sum(sys.getsizeof(df) + df.memory_usage(index=True).sum() for df in self.backprop_element_df_list)
+        total_memory += size_backprop_element_df
+
+        # Calculate memory usage for filtered_elements_list (lists of integers)
+        size_filtered_elements = sum(sys.getsizeof(lst) + sum(sys.getsizeof(e) for e in lst) for lst in self.filtered_elements_list)
+        total_memory += size_filtered_elements
+
+        # Calculate memory usage for model_list (models)
+        size_model = sum(sys.getsizeof(model) + sum(p.numel() * p.element_size() for p in model.parameters()) for model in self.model_list)
+        total_memory += size_model
+
+        print(f"Total memory usage (postprocess data): {total_memory / (1024 ** 2):.2f} MB")
+
+
+    def checkpoint(self,
+        current_epoch: int,
+        loss_epoch: float,
+        removed_elements: set,
+        mat_tensor: torch.Tensor,
+        model: torch.nn.Module,
+        loss_df: pd.DataFrame,
+        backprop_element_df: pd.DataFrame) -> None:
+
+        # Update metrics
+        self.loss_epoch_list.append(loss_epoch)
+        self.loss_df_list.append(loss_df)
+        self.mat_tensor_list.append(mat_tensor)
+        self.backprop_element_df_list.append(backprop_element_df)
+        self.filtered_elements_list.append(removed_elements)
+        self.model_list.append(model)
+
+        """
+        store all data from epochs with a lower loss:
+        store model (with weights)
+        store simulation data
+        store debug data
+        store mat_tensor
+        saves the data to the archive directory for epochs where the loss was at a local minmum or inflection point
+        """
+
+        #save the data to the archive directory
+        last_epoch = current_epoch - 1
+        self.data_saver(current_epoch)
+
+        #for the initial epoch the last epoch is very large (bigger than current loss)
+        current_loss = self.loss_epoch_list[-1]
+        last_loss = self.loss_epoch_list[-2] if len(self.loss_epoch_list) >= 2 else 1e100
+    
+
+        # Check if the current loss is a local minimum
+        if current_loss < last_loss:
+            self.delete_checkpoint(last_epoch)
+        else:
+            # Save the last epoch to the local minima list if it's not already there
+            if last_epoch not in self.local_minima_epochs:
+                self.local_minima_epochs.append(last_epoch)
+
+        # Delete checkpoints only if they are not local minima
+        if current_loss > last_loss and last_epoch not in self.local_minima_epochs:
+            self.delete_checkpoint(last_epoch)
+        #print memory usage
+        self.calculate_memory_usage()
+
+
+
+    def delete_checkpoint(self, epoch: int):
+        """
+        Deletes the checkpoint for the specified epoch.
+
+        Args:
+            epoch (int): Epoch for which the checkpoint should be deleted.
+
+        Returns:
+            None
+        """
+        epoch_dir = os.path.join(self.parent_out_directory, f'epoch_{epoch}')
+        if os.path.exists(epoch_dir):
+            shutil.rmtree(epoch_dir)
+        else:
+            if epoch == -1:
+                #nothing to delete for the first epoch
+                pass
+            else:
+                raise FileNotFoundError(f"Checkpoint for epoch {epoch} does not exist")
+            
+    def data_saver(self, epoch):
+        #create the epoch directory and assign to output directory
+        epoch_dir = os.path.join(self.parent_out_directory, f'epoch_{epoch}')
+        os.makedirs(epoch_dir)
+        self.out_dir = epoch_dir
+
+        # Save the model
+        model_path = os.path.join(self.out_dir, f'model.pt')
+        torch.save(self.model.state_dict(), model_path)
+
+        # Save the simulation data
+        odb = file_picker(self.working_directory, self.expname, '.odb')
+        shutil.copy(odb, self.out_dir)
+        inp = file_picker(self.working_directory, self.expname, '.inp')
+        shutil.copy(inp, self.out_dir)
+
+        #save the filtered elements
+        filtered_elements = self.filtered_elements_list[epoch]
+        filtered_elements_path = os.path.join(self.out_dir, 'filtered_elements.txt')
+        self.write_filtered_elements_to_file(filtered_elements, filtered_elements_path)
+
+        # Save the debug data
+        self.save_debug_frames(epochs_to_save=epoch)
+        self.kNN_plt(title=f'epoch {epoch + 1}', epochs_to_plot=epoch)
+        self.force_plot(title=f'epoch {epoch + 1}', epochs_to_plot=epoch)
+
+
+    @staticmethod
+    def write_filtered_elements_to_file(filtered_elements: set, file_path: str) -> None:
+        """
+        Writes the filtered elements to a file in the specified format.
+
+        Args:
+            filtered_elements (set): Set of integers representing filtered elements.
+            file_path (str): Path to the file where the output should be written.
+
+        Returns:
+            None
+            """
+        # Convert the set to a sorted list
+        sorted_elements = sorted(filtered_elements)
+
+        # Create a list to hold the formatted elements
+        formatted_elements = []
+
+        # Iterate through the sorted elements and add a newline every 20 elements
+        for i in range(0, len(sorted_elements), 20):
+            chunk = sorted_elements[i:i+20]
+            formatted_elements.append(', '.join(map(str, chunk)) + ',')
+
+        # Join the chunks with newlines, ensuring a comma is added at the end of each line
+        elements_str = '\n    '.join(formatted_elements)
+
+        # Format the string, and add an additional comma at the end if required
+        formatted_str = f"filtered elements: {{\n{elements_str}\n}}"
+
+        # Write to file
+        with open(file_path, 'w') as file:
+            file.write(formatted_str)
+
+    def color_picker(self, epoch):
+        colormap = plt.cm.viridis  # You can choose any colormap you like
+        total_epochs = self.number_of_epochs
+        return colormap(epoch / total_epochs)
+
+
+        
+    def write_summary(self):
+        #reinitialize output directory
+        self.out_dir = os.path.join(self.parent_out_directory, 'summary')
+        os.makedirs(self.out_dir)
+
+        evenspaced_epochs = self.evenspaced_epochs()
+        self.save_debug_frames(epochs_to_save=evenspaced_epochs)
+        self.epoch_loss_plt()
+        self.epoch_logloss_plt()
+        self.kNN_plt(title= 'epoch selection',epochs_to_plot=evenspaced_epochs)
+        self.force_plot(title= 'epoch selection', epochs_to_plot=evenspaced_epochs)
+        self.write_report()
+
+        self.out_dir = os.path.join(self.parent_out_directory, 'lowest_losses')
+        os.makedirs(self.out_dir)
+        lowest_loss_epochs = self.lowest_loss_epochs()
+        self.save_debug_frames(epochs_to_save=lowest_loss_epochs)
+        self.kNN_plt(title= 'lowest losses',epochs_to_plot=lowest_loss_epochs)
+        self.force_plot(title= 'lowest losses', epochs_to_plot=lowest_loss_epochs)
+
+
+    def evenspaced_epochs(self):
+        epochs_list = []
+        if self.number_of_epochs <= 10:
+            return list(range(self.number_of_epochs))
+        else:
+            plot_increment = self.number_of_epochs // 10
+            for i in range(plot_increment - 1, self.number_of_epochs, plot_increment):
+                epochs_list.append(i)
+            if epochs_list[-1] != self.number_of_epochs - 1:  # Ensure last epoch is included
+                epochs_list[-1] = self.number_of_epochs - 1
+            return epochs_list
+
+    def lowest_loss_epochs(self, num_epochs: int = 5):
+        """
+        Returns the indices of the epochs with the lowest loss values.
+        """
+        loss_epoch = np.array(self.loss_epoch_list)
+        if len(loss_epoch) < num_epochs:
+            num_epochs = len(loss_epoch)
+        return np.argsort(loss_epoch)[:num_epochs]
+    
+    def force_plot(self, title: str = '', epochs_to_plot: Union[int, List[int], None] = None) -> None:
+        """
+        Plots the experimental and simulated forces for specified epochs and saves the plot and data to files.
+
+        Args:
+            epochs_to_plot (Union[int, List[int], None]): Epoch(s) to plot. Can be a single epoch, a list of epochs, or None.
+                                                        If None, plots the epochs specified in self.epochs_to_plot.
+
+        Returns:
+            None
+        """
+
+        if isinstance(epochs_to_plot, int):
+            epochs_to_plot = [epochs_to_plot]
+
+        # Assuming displacement is constant across epochs, use it as the index
+        displacement = self.loss_df_list[0]['displacement']
+        master_df = pd.DataFrame(displacement, columns=['displacement'])
+        # Add experimental force as a constant column
+        f_exp = self.loss_df_list[0]['force_target']
+        master_df['Experimental Force'] = f_exp
+
+        # Add simulated force for each epoch as new columns
+        for epoch, df in enumerate(self.loss_df_list):
+            f_sim = df['force_sim']
+            master_df[f'Simulated Force Epoch {epoch + 1}'] = f_sim
+
+        # Plot the experimental and simulated forces
+        plt.figure(figsize=(10, 6))
+        plt.plot(master_df['displacement'], master_df['Experimental Force'], label='Target Force', color='red')
+
+        for epoch in epochs_to_plot:
+            plt.plot(master_df['displacement'], master_df[f'Simulated Force Epoch {epoch + 1}'],
+                    label=f'Simulated Force, Epoch {epoch + 1}', color=self.color_picker(epoch))
+
+        plt.xlabel('Displacement [mm]')
+        plt.ylabel('Force [N]')
+        plt.title(f'Force Comparison {title}')
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.savefig(os.path.join(self.out_dir, 'Force_Comparison.png'), bbox_inches='tight')
+        plt.close()
+
+        # Write data to csv
+        master_df.to_csv(os.path.join(self.out_dir, 'Force_Comparison.csv'))
+
+    def kNN_plt(self, title: str = '', epochs_to_plot: Union[int, List[int], None] = None) -> None:
+        """
+        Plots the kNN model predictions for specified epochs and saves the plot and data to files.
+
+        Args:
+            epochs_to_plot (Union[int, List[int], None]): Epoch(s) to plot. Can be a single epoch, a list of epochs, or None.
+                                                        If None, plots the epochs specified in self.epochs_to_plot.
+
+        Returns:
+            None
+        """
+
+        if isinstance(epochs_to_plot, int):
+            epochs_to_plot = [epochs_to_plot]
+
+        # Initialize master_df with strain values as the index if strain is constant across epochs
+        strain = list(self.mat_tensor_list[0][:, 1].detach().numpy())  # Assuming the first tensor's strain values are representative
+        master_df = pd.DataFrame(strain, columns=['strain'])
+
+        # Generate plot of the kNN model prediction and save to df
+        for epoch, mat_tensor in enumerate(self.mat_tensor_list):
+            stress = list(mat_tensor[:, 0].detach().numpy())
+
+            # Check if lengths match
+            if len(stress) != len(strain):
+                raise ValueError(f"Length of values ({len(stress)}) does not match length of index ({len(strain)}) at epoch {epoch}")
+
+            # Plot specified epochs
+            if epoch in epochs_to_plot:
+                plt.plot(strain, stress, label=f'kNN Epoch {epoch + 1}', color=self.color_picker(epoch))
+                # Adding columns to the master_df
+                new_column = pd.DataFrame(stress, columns=[f'kNN(strain)_{epoch + 1}'])
+                master_df = pd.concat([master_df, new_column], axis=1)
+
+        # Write data to csv        
+        master_df.to_csv(os.path.join(self.out_dir, 'kNN_master.csv'))
+
+        plt.xlabel('Plastic Strain [-]')
+        plt.ylabel('Yield Stress [MPa]')
+        plt.title(f'kNN (Model Prediction) {title}')
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.savefig(os.path.join(self.out_dir, f'kNN.png'), bbox_inches='tight')
+        plt.close()
+
+
+    def save_debug_frames(self, epochs_to_save: Union[int, List[int], None] = None) -> None:
+        """
+        Saves the debug gradient data frames for specified epochs to CSV files.
+
+        Args:
+            epochs_to_plot (Union[int, List[int], None]): Epoch(s) to save. Can be a single epoch, a list of epochs
+                                                       
+
+        Returns:
+            None
+        """
+        if isinstance(epochs_to_save, int):
+            epochs_to_save = [epochs_to_save]
+
+        for epoch, df in enumerate(self.backprop_element_df_list):
+            if epoch in epochs_to_save:
+                # Save the debug data to a CSV file for the epoch
+                df.to_csv(os.path.join(self.out_dir, f'debug_gradient_{epoch}.csv'), index=False)
+
+    def epoch_loss_plt(self):
+        # Generate plot of the loss along epoch
+        plt.scatter(range(len(self.loss_epoch_list)), self.loss_epoch_list)
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Loss per Epoch')
+        plt.savefig(os.path.join(self.out_dir, f'epoch_loss.png'))
+        plt.close()
+
+        #write data to csv
+        # Assuming self.loss_epoch is a list of loss values
+        data = [{'epoch': i + 1, 'loss': loss} for i, loss in enumerate(self.loss_epoch_list)]
+        df = pd.DataFrame(data)
+        df.to_csv(os.path.join(self.out_dir, 'epoch_loss.csv'), index=False)
+
+    def epoch_logloss_plt(self):
+        # Generate plot of the loss along epoch
+        plt.scatter(range(len(self.loss_epoch_list)), np.log(self.loss_epoch_list))
+        plt.xlabel('Epoch')
+        plt.ylabel('log (Loss)')
+        plt.title('log (Loss) per Epoch')
+        plt.savefig(os.path.join(self.out_dir, f'epoch_logloss.png'))
+        plt.close()
+
+        #write data to csv
+        # Assuming self.loss_epoch is a list of loss values
+        data = [{'epoch': i + 1, 'log(loss)': np.log(loss)} for i, loss in enumerate(self.loss_epoch_list)]
+        df = pd.DataFrame(data)
+        df.to_csv(os.path.join(self.out_dir, 'epoch_log_loss.csv'), index=False)
+
+    def write_report(self):
+        with open(f'{self.out_dir}/{self.test_name}_report.txt', 'w') as report:
+            # Write the report structure
+            report.write(f'Test Run: {self.test_name}, Date: {datetime.now().strftime("%Y-%m-%d, %H:%M:%S")}\n')
+            report.write(f'Model:\n{self.model}\n\n')
+            report.write(f'Run description: {self.test_description}\n\n')  # Assuming 'description' contains the model description and code
+
+            report.write(f'Expname / Loss Data: {self.expname}\n\n')
+
+            report.write('Training:\n')
+            report.write(f'Optimizer: {self.optimizer}\n')
+            report.write(f'Learn Rate: {self.learning_rate}\n')  
+            report.write(f'Number of Epochs: {self.number_of_epochs}\n') 
+            report.write(f'Train Loop Description: {self.train_loop_description}\n\n')
+
+
+
+
+
+
+
+
+
+
+
+
 
 def cleaner(working_directory):
     expname_list = ['H_10', 'H_50', 'C_20']
