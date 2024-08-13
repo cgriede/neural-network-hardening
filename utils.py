@@ -1371,7 +1371,6 @@ class TestrunSummaryWriter:
 
 
 
-
 def cleaner(working_directory):
     expname_list = ['H_10', 'H_50', 'C_20']
     keep = ['exp_data', 'exp_data_original', 'exp_data_simulated', 'error_log'] + [f'{expname}_000.inp' for expname in expname_list]
