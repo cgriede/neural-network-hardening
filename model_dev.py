@@ -576,22 +576,40 @@ if __name__ == '__main__':
         num_cpus = 4
 
     #set number of training epochs
-    epochs = 2
+    epochs = 5
 
     #set the random seed
     torch.manual_seed(37)
 
-    # Define the models to test
-    model = SimpleModel()
-    model_type = '4_layer_tanh_softplus'
+    generate_scripts = False
+    if generate_scripts:
+        # Define the models to test
+        model = MODEL_PLACEHOLDER()
+        model_type = "MODEL_TYPE_PLACEHOLDER"
 
 
-    # Define the learning rate
-    lr = 0.001
+        # Define the learning rate
+        lr = LR_PLACEHOLDER
 
-    # Define the optimizer
-    optimizer = optim.RMSprop(model.parameters(), lr=lr)
-    optim_type = 'RMSprop'
+        # Define the optimizer
+        optimizer = OPTIMIZER_PLACEHOLDER
+        optim_type = "OPTIM_TYPE_PLACEHOLDER"
+
+        clipping_rate = CR_PLACEHOLDER
+    
+    else:
+        # Define the models to test
+        model = SimpleModel()
+        model_type = "SimpleModel"
+
+        # Define the learning rate
+        lr = 0.0005
+
+        # Define the optimizer
+        optimizer = optim.Adam(model.parameters(), lr=lr)
+        optim_type = "Adam"
+
+        clipping_rate = 5
 
     #wheter to update inp and run simulation (turn off for debugging, Abaqus not installed)
     RUN_SIM = True
@@ -600,7 +618,7 @@ if __name__ == '__main__':
     TRAIN = True
 
     #wheter to clean the working directory after each epoch
-    CLEAN = True
+    CLEAN = False
 
 
     #set debug mode
@@ -633,7 +651,7 @@ if __name__ == '__main__':
     working_directory=working_directory,
     expname=expname,
     strain_tensor=strain_tensor,
-    clipping_rate=None,
+    clipping_rate=clipping_rate,
     n_epochs=epochs,
     num_cpus=num_cpus,
     optimizer=optimizer,
