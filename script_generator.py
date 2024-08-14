@@ -43,8 +43,6 @@ def create_test_dir(model, optimizer, optimizer_type, clipping_rate, learning_ra
     for line in model_dev_content:
         if 'MODEL_PLACEHOLDER' in line:
             line = line.replace('MODEL_PLACEHOLDER', model)
-        if 'MODEL_TYPE_PLACEHOLDER' in line:
-            line = line.replace('MODEL_TYPE_PLACEHOLDER', model)
         if 'LR_PLACEHOLDER' in line:
             line = line.replace('LR_PLACEHOLDER', str(learning_rate))
         if 'OPTIMIZER_PLACEHOLDER' in line:
