@@ -1,6 +1,7 @@
 import os
 import shutil
 import torch.optim as optim
+from utils import cleaner
 
 # Define parameters
 models = ['SimpleModel', 'DeepModel', 'BatchNormModel']
@@ -83,6 +84,9 @@ def create_test_dir(model, optimizer, optimizer_type, clipping_rate, learning_ra
     submission_path = os.path.join(dir_path, 'submission_file.sh')
     with open(submission_path, 'w') as submission_file:
         submission_file.writelines(updated_submission_file_content)
+
+    #clean the working directory before copying the files
+    cleaner(working_directory='wd_dev')
 
     # Copy other necessary files
     for item in os.listdir(source_dir):
