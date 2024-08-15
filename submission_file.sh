@@ -3,7 +3,7 @@
 #SBATCH --output=result.txt
 #SBATCH --error=error.txt
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=1G
 #SBATCH --time=23:59:00
 #SBATCH --partition=batch

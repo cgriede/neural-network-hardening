@@ -93,7 +93,7 @@ if __name__ == '__main__':
     #set the random seed
     torch.manual_seed(37)
 
-    generator = False
+    generator = True
     if generator:
         # Define the models to test
         model = models.MODEL_PLACEHOLDER()

@@ -6,30 +6,31 @@ import torch.optim as optim
 models = ['SimpleModel', 'DeepModel', 'BatchNormModel']
 optimizers = ['optim.Adam', 'optim.RMSprop']
 clipping_rates = [None, 5]
-learning_rates = [0.001, 0.0005]
+#learning_rates = [0.001, 0.0005]
 
 # Define specific combinations
 combinations = [
-    ('tf.MSE()', 'tf.StandardFilter', 0.001, None),
-    ('tf.MSE()', 'tf.StandardFilter', 0.0005, None),
+    #('tf.MSE()', 'tf.StandardFilter', 0.001, None),
+    #('tf.MSE()', 'tf.StandardFilter', 0.0005, None),
     ('tf.MSE()', 'tf.DynamicFilter001', 0.001, None),
     ('tf.MSE()', 'tf.DynamicFilter0005', 0.0005, None),
-    ('tf.WSE(5, 0.5)', 'tf.StandardFilter', 0.001, None),
-    ('tf.WSE(5, 0.5)', 'tf.StandardFilter', 0.0005, None)
+    #('tf.WSE(5, 0.5)', 'tf.StandardFilter', 0.001, None),
+    #('tf.WSE(5, 0.5)', 'tf.StandardFilter', 0.0005, None)
 ]
 
-expected_number_of_tests = len(combinations) * len(clipping_rates)
-print(f"Expected number of tests: {expected_number_of_tests}")
+expected_number_tests = len(models) * len(optimizers) * len(combinations) * len(clipping_rates)
+print(f"Expected number of tests: {expected_number_tests}")
 
 source_dir = os.getcwd()
-exclude_files = ['script_generator.py', 'scratch.py', '.gitignore', 'submit_all_jobs.sh',
-                 '.git', 'ML_Tests', 'main.py', 'submission_file.sh']
 
 # Base directory for tests
-base_dir = 'ML_Tests'
+base_dir = 'ML_Tests_DynamicFilter'
 if os.path.exists(base_dir):
     shutil.rmtree(base_dir)
 os.makedirs(base_dir, exist_ok=True)
+
+exclude_files = [base_dir, 'script_generator.py', 'scratch.py', '.gitignore', 'submit_all_jobs.sh',
+                 '.git', 'ML_Tests', 'main.py', 'submission_file.sh', 'validation.py']
 
 # Function to create new directories and scripts
 def create_test_dir(model, optimizer, optimizer_type, clipping_rate, learning_rate, loss_inst, feature_selector):
@@ -100,3 +101,5 @@ for model in models:
         for loss_inst, feature_selector, learning_rate, _ in combinations:
             for clipping_rate in clipping_rates:
                 create_test_dir(model, optimizer, optimizer_type, clipping_rate, learning_rate, loss_inst, feature_selector)
+
+print("All tests generated successfully!")
