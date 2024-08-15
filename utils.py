@@ -964,6 +964,9 @@ class TestrunSummaryWriter:
         self.loss_epoch_list = []
 
         self.master_df = pd.DataFrame()
+
+        # Ensure the archive directory exists
+        self.ensure_archive_exists()
         
         # Generate subdirectory in the archive directory
         date = datetime.now().strftime('%Y%m%d_%H')
@@ -983,6 +986,9 @@ class TestrunSummaryWriter:
 
         self.epochs_to_remove = set()
 
+    def ensure_archive_exists(self):
+        if not os.path.exists(self.archive_dir):
+            os.makedirs(self.archive_dir)
 
     def checkpoint(self,
         current_epoch: int,

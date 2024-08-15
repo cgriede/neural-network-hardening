@@ -30,7 +30,7 @@ if os.path.exists(base_dir):
 os.makedirs(base_dir, exist_ok=True)
 
 exclude_files = [base_dir, 'script_generator.py', 'scratch.py', '.gitignore', 'submit_all_jobs.sh',
-                 '.git', 'ML_Tests', 'main.py', 'submission_file.sh', 'validation.py']
+                 '.git', 'ML_Tests', 'main.py', 'submission_file.sh', 'validation.py', 'archive_dev']
 
 # Function to create new directories and scripts
 def create_test_dir(model, optimizer, optimizer_type, clipping_rate, learning_rate, loss_inst, feature_selector):
