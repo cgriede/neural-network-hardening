@@ -88,35 +88,29 @@ if __name__ == '__main__':
         num_cpus = 4
 
     #set number of training epochs
-    epochs = 2
+    epochs = 500
 
     #set the random seed
     torch.manual_seed(37)
 
-    generate_scripts = False
-    if generate_scripts:
-        # Define the models to test
-        model = models.MODEL_PLACEHOLDER()
 
-        # Define the learning rate
-        lr = LR_PLACEHOLDER
+    # Define the models to test
+    model = models.MODEL_PLACEHOLDER()
 
-        # Define the optimizer
-        optimizer = OPTIMIZER_PLACEHOLDER
+    # Define the learning rate
+    lr = LR_PLACEHOLDER
 
-        clipping_rate = CR_PLACEHOLDER
-    
-    else:
-        # Define the models to test
-        model = models.SimpleModel()
+    # Define the optimizer
+    optimizer = OPTIMIZER_PLACEHOLDER
 
-        # Define the learning rate
-        lr = 0.0005
+    clipping_rate = CR_PLACEHOLDER
 
-        # Define the optimizer
-        optimizer = optim.Adam(model.parameters(), lr=lr)
+    feauture_selector = FEATURE_SELECTOR_PLACEHOLDER
 
-        clipping_rate = 5
+    loss_inst = LOSS_INST_PLACEHOLDER
+
+    optim.Adam(model.parameters(), lr=lr)
+
 
     #wheter to update inp and run simulation (turn off for debugging, Abaqus not installed)
     RUN_SIM = True
@@ -125,7 +119,7 @@ if __name__ == '__main__':
     TRAIN = True
 
     #wheter to clean the working directory after each epoch
-    CLEAN = False
+    CLEAN = True
 
     if TRAIN:
         trainer = tf.ModelTrainer(
@@ -137,19 +131,12 @@ if __name__ == '__main__':
                  n_epochs = epochs,
                  optimizer= optimizer,
                  clean= CLEAN,
-                 FeatureSelector= tf.DynamicFilter001,
+                 FeatureSelector= feauture_selector,
                  run_sim = RUN_SIM,
-                 LossInst= tf.WSE(5, 0.5),
+                 LossInst= loss_inst,
                  scheduler=None,
-                 clipping_rate = 5,)
+                 clipping_rate = clipping_rate,)
 
 
         #run the training loop
         trainer.train_default()
-
-####run these settings
-#tf.WSE(5, 0.5)
-#tf.MSE()
-#tf.StandardFilter
-#tf.DynamicFilter0005
-#tf.DynamicFilter001

@@ -2,11 +2,10 @@ import os
 import shutil
 import torch.optim as optim
 # Define parameters
-models = ['SimpleModel', 'DeepModel', 'ShallowModel']
+models = ['SimpleModel', 'DeepModel', 'BatchNormModel']
 optimizers = ['optim.Adam', 'optim.RMSprop']
-optimizer_types = ['Adam', 'RMSprop',]
-clipping_rates = [None, 2, 5,]
-learning_rates = [0.005, 0.001, 0.0005,]
+clipping_rates = [None, 5,]
+learning_rates = [0.001, 0.0005,]
 
 expected_number_of_tests = len(models) * len(optimizers) * len(clipping_rates) * len(learning_rates)
 print(f"Expected number of tests: {expected_number_of_tests}")
@@ -14,7 +13,7 @@ print(f"Expected number of tests: {expected_number_of_tests}")
 
 source_dir = os.getcwd()
 exclude_files = ['script_generator.py', 'scratch.py', '.gitignore', 'submit_all_jobs.sh',
-                '.git', 'ML_Tests', 'model_dev.py', 'submission_file.sh']
+                '.git', 'ML_Tests', 'main.py', 'submission_file.sh']
 
 
 # Base directory for tests
@@ -47,8 +46,6 @@ def create_test_dir(model, optimizer, optimizer_type, clipping_rate, learning_ra
             line = line.replace('LR_PLACEHOLDER', str(learning_rate))
         if 'OPTIMIZER_PLACEHOLDER' in line:
             line = line.replace('OPTIMIZER_PLACEHOLDER', f'{optimizer}(model.parameters(), lr={learning_rate})')
-        if 'OPTIM_TYPE_PLACEHOLDER' in line:
-            line = line.replace('OPTIM_TYPE_PLACEHOLDER', optimizer_type)
         if 'CR_PLACEHOLDER' in line:
             line = line.replace('CR_PLACEHOLDER', str(clipping_rate))
         updated_model_dev_content.append(line)

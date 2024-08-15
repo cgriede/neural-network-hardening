@@ -18,8 +18,10 @@ module load abaqus/2023
 #activate environment
 source /cluster/home/cgriede/nnet/bin/activate
 
-dos2unix model_dev.py
+dos2unix main.py
 dos2unix utils.py
+dos2unix models.py
+dos2unix train_functions.py
 
 # Run your script
-python model_dev.py --cpus $SLURM_CPUS_PER_TASK
+python main.py --cpus $SLURM_CPUS_PER_TASK
