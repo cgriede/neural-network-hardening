@@ -93,23 +93,38 @@ if __name__ == '__main__':
     #set the random seed
     torch.manual_seed(37)
 
+    generator = False
+    if generator:
+        # Define the models to test
+        model = models.MODEL_PLACEHOLDER()
 
-    # Define the models to test
-    model = models.MODEL_PLACEHOLDER()
+        # Define the learning rate
+        lr = LR_PLACEHOLDER
 
-    # Define the learning rate
-    lr = LR_PLACEHOLDER
+        # Define the optimizer
+        optimizer = OPTIMIZER_PLACEHOLDER
 
-    # Define the optimizer
-    optimizer = OPTIMIZER_PLACEHOLDER
+        clipping_rate = CR_PLACEHOLDER
 
-    clipping_rate = CR_PLACEHOLDER
+        feauture_selector = FEATURE_SELECTOR_PLACEHOLDER
 
-    feauture_selector = FEATURE_SELECTOR_PLACEHOLDER
+        loss_inst = LOSS_INST_PLACEHOLDER
+    else:
+        # Define the model
+        model = models.SimpleModel()
 
-    loss_inst = LOSS_INST_PLACEHOLDER
+        # Define the learning rate
+        lr = 0.001
 
-    optim.Adam(model.parameters(), lr=lr)
+        # Define the optimizer
+        optimizer = optim.RMSprop(model.parameters(), lr=lr)
+
+        clipping_rate = None
+
+        feauture_selector = tf.DynamicFilter001
+
+        loss_inst = tf.MSE()
+
 
 
     #wheter to update inp and run simulation (turn off for debugging, Abaqus not installed)

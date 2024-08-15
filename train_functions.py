@@ -19,6 +19,8 @@ class Loss:
     def __init__(self,):
         self.output = None
         self.target = None
+        self.value = None
+
 
     def compute_loss(self, output, target):
         self.output = output
@@ -28,6 +30,9 @@ class Loss:
     def gradient(self):
         raise NotImplementedError("Subclasses should implement this method")
     
+    def value(self):
+        return self.value
+    
 class MSE(Loss):
     def __init__(self,):
         super().__init__()
@@ -35,7 +40,8 @@ class MSE(Loss):
     def compute_loss(self, output, target):
         self.output = output
         self.target = target
-        return ((self.output - self.target) ** 2).mean()
+        self.value = ((self.output - self.target) ** 2).mean()
+        return self.value
     
     def gradient(self):
         return 2 * (self.output - self.target) / len(self.output)
@@ -52,7 +58,8 @@ class WSE(Loss):
         errors = (self.output - self.target) ** 2
         threshold_index = int(len(self.output) * self.threshold)
         errors[:threshold_index] *= self.mul
-        return errors.mean()
+        self.value = errors.mean()
+        return self.value
     
     def gradient(self):
         errors = self.output - self.target
@@ -436,13 +443,13 @@ class DynamicFilter0005(FeatureSelector):
     def __init__(self,):
         super().__init__()
         self.loss_list = []
-        self.cooldown = 5
+        self.cooldown = 1
         self.insignificant_threshold = 0.25 #0.25% threshold for insignificant loss decrease (lr 0.0005)
         self.cut_ratio = 0.2
 
     def select_features(self, loss, force_loss_df, element_dict):
         self.loss = loss
-        self.loss_list.append(loss)
+        self.loss_list.append(loss.value)
         self.force_loss_df = force_loss_df
         self.element_dict = element_dict
 
@@ -456,6 +463,7 @@ class DynamicFilter0005(FeatureSelector):
                 print("Insignificant loss decrease:", percentage_decrease, "%")
                 if self.cut_ratio < 0.9:
                     self.cut_ratio += 0.1
+                    print(f'increased cut ratio to {self.cut_ratio}')
 
         use_displacement_index = int(len(self.force_loss_df) * self.cut_ratio)
 
