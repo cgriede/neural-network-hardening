@@ -444,7 +444,7 @@ class DynamicFilter0005(FeatureSelector):
         super().__init__()
         self.loss_list = []
         self.cooldown = 1
-        self.insignificant_threshold = 0.25 #0.25% threshold for insignificant loss decrease (lr 0.0005)
+        self.insignificant_threshold = 2 #2% threshold for insignificant loss decrease (lr 0.0005)
         self.cut_ratio = 0.2
 
     def select_features(self, loss, force_loss_df, element_dict):
@@ -574,5 +574,5 @@ class DynamicFilter001(DynamicFilter0005):
         super().__init__()
         self.loss_list = []
         self.cooldown = 5
-        self.insignificant_threshold = 0.5 #0.5% threshold for insignificant loss decrease (lr 0.001)
+        self.insignificant_threshold = 1 # 1% threshold for insignificant loss decrease (lr 0.001)
         self.cut_ratio = 0.2
