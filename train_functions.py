@@ -257,12 +257,13 @@ class ModelTrainer:
         self.strain_tensor = strain_tensor
         #default strain tensor
         if self.strain_tensor is None:
-            s_xsmall = torch.linspace(0,0.00095, 20, dtype=torch.float64)
-            s_small = torch.linspace(0.001,0.0095, 20, dtype=torch.float64)
-            s_middle = torch.linspace(0.01, 0.0495, 20, dtype=torch.float64)
-            s_large = torch.linspace(0.05, 0.7, 20, dtype=torch.float64)
+            s_very_small = torch.linspace(0, 0.00095, 20, dtype=torch.float64)
+            s_small = torch.linspace(0.001, 0.0095, 20, dtype=torch.float64)
+            s_medium = torch.linspace(0.01, 0.0495, 20, dtype=torch.float64)
+            s_medium_large = torch.linspace(0.05, 0.4, 30, dtype=torch.float64)
+            s_large = torch.linspace(0.4, 0.7, 20, dtype=torch.float64)
 
-            self.strain_tensor = torch.cat((s_xsmall, s_small, s_middle, s_large)).unsqueeze(1)
+            self.strain_tensor = torch.cat((s_very_small, s_small, s_medium, s_medium_large, s_large)).unsqueeze(1)
 
     def set_scheduler(self, scheduler):
         self.scheduler = scheduler
