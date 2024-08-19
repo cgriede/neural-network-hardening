@@ -1049,8 +1049,9 @@ class TestrunSummaryWriter:
         mat_tensor: torch.Tensor,
         model: torch.nn.Module,
         loss_df: pd.DataFrame,
-        backprop_element_df: pd.DataFrame) -> None:
-
+        backprop_element_df: pd.DataFrame,
+        save_all_epochs: bool = False,
+        ) -> None:
 
         """
         store all data from epochs with a lower loss:
@@ -1092,7 +1093,8 @@ class TestrunSummaryWriter:
             del self.backprop_element_df_dict[epoch]
             del self.filtered_elements_dict[epoch]
             del self.model_dict[epoch]
-            self.delete_checkpoint(epoch)
+            if not save_all_epochs:
+                self.delete_checkpoint(epoch)
             #reset the epochs to remove set
             self.epochs_to_remove = set()
 
