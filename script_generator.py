@@ -5,30 +5,37 @@ from utils import cleaner
 
 # Define parameters
 seeds = [37,]
-models = ['SimpleModel', 'DeepModel',]
-optimizers = ['optim.Adam', 'optim.RMSprop']
-clipping_rates = [5, 15]
+models = [#'SimpleModel',
+          'DeepModel',]
+clipping_rates = [5]
 
 # Define specific combinations
 combinations = [
     ('tf.MSE()', 'tf.StandardFilter', 0.001, 600),
     ('tf.MSE()', 'tf.StandardFilter', 0.0005, 800),
         
-    ('tf.MSE()', 'tf.BoundaryCondition', 0.001, 300),
-    ('tf.MSE()', 'tf.BoundaryCondition', 0.0005, 400),
+    ('tf.MSE()', 'tf.HeavyRegularization', 0.001, 300),
+    ('tf.MSE()', 'tf.HeavyRegularization', 0.0005, 400),
+
+    ('optim.RMSprop', 'tf.MSE()', 'LightRegularization', 0.001, 300),
 
     ('tf.MSE()', 'tf.EnforceS33Direction', 0.001, 600),
     ('tf.MSE()', 'tf.EnforceS33Direction', 0.0005, 800),
 
 ]
 
-expected_number_tests = len(seeds)*len(models) * len(optimizers) * len(combinations) * len(clipping_rates)
+video_combination = [
+    ('optim.RMSprop', 'tf.MSE()', 'tf.HeavyRegularization', 0.001, 300),
+
+]
+
+expected_number_tests = len(seeds)*len(models) * len(combinations) * len(clipping_rates)
 print(f"Expected number of tests: {expected_number_tests}")
 
 source_dir = os.getcwd()
 
 # Base directory for tests
-base_dir = 'ML_Tests'
+base_dir = 'ML_Video'
 if os.path.exists(base_dir):
     shutil.rmtree(base_dir)
 os.makedirs(base_dir, exist_ok=True)
@@ -116,12 +123,12 @@ def create_test_dir(n_epochs, seed, model, optimizer, optimizer_type, clipping_r
                 shutil.copy2(src_path, dst_path)
 
 # Generate directories and scripts for each configuration
+config = video_combination
 for seed in seeds:
     for model in models:
-        for index, optimizer in enumerate(optimizers):
+        for optimizer, loss_inst, feature_selector, learning_rate, n_epochs in config:
             optimizer_type = optimizer.split('.')[1]
             for clipping_rate in clipping_rates:
-                for loss_inst, feature_selector, learning_rate, n_epochs in combinations:
                     create_test_dir(n_epochs, seed, model, optimizer, optimizer_type, clipping_rate, learning_rate, loss_inst, feature_selector)
 
 print("All tests generated successfully!")
