@@ -26,6 +26,7 @@ scratch.py
 # Ignore specific directories
 wd_dev/
 archive_dev/
+archive/
 __pycache__/
 ML_Tests/
 ML_Tests_DynamicFilter/

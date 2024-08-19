@@ -4,42 +4,52 @@ import torch.optim as optim
 from utils import cleaner
 
 # Define parameters
-models = ['SimpleModel', 'DeepModel', 'BatchNormModel']
+seeds = [37,]
+models = ['SimpleModel', 'DeepModel',]
 optimizers = ['optim.Adam', 'optim.RMSprop']
-clipping_rates = [None, 5]
-#learning_rates = [0.001, 0.0005]
+clipping_rates = [5, 15]
 
 # Define specific combinations
 combinations = [
-    #('tf.MSE()', 'tf.StandardFilter', 0.001, None),
-    #('tf.MSE()', 'tf.StandardFilter', 0.0005, None),
-    ('tf.MSE()', 'tf.DynamicFilter001', 0.001, None),
-    ('tf.MSE()', 'tf.DynamicFilter0005', 0.0005, None),
-    #('tf.WSE(5, 0.5)', 'tf.StandardFilter', 0.001, None),
-    #('tf.WSE(5, 0.5)', 'tf.StandardFilter', 0.0005, None)
+    ('tf.MSE()', 'tf.StandardFilter', 0.001, 600),
+    ('tf.MSE()', 'tf.StandardFilter', 0.0005, 800),
+        
+    ('tf.MSE()', 'tf.BoundaryCondition', 0.001, 300),
+    ('tf.MSE()', 'tf.BoundaryCondition', 0.0005, 400),
+
+    ('tf.MSE()', 'tf.EnforceS33Direction', 0.001, 600),
+    ('tf.MSE()', 'tf.EnforceS33Direction', 0.0005, 800),
+
 ]
 
-expected_number_tests = len(models) * len(optimizers) * len(combinations) * len(clipping_rates)
+expected_number_tests = len(seeds)*len(models) * len(optimizers) * len(combinations) * len(clipping_rates)
 print(f"Expected number of tests: {expected_number_tests}")
 
 source_dir = os.getcwd()
 
 # Base directory for tests
-base_dir = 'ML_Tests_DynamicFilter'
+base_dir = 'ML_Tests'
 if os.path.exists(base_dir):
     shutil.rmtree(base_dir)
 os.makedirs(base_dir, exist_ok=True)
 
+#include bash script to submit all jobs in base directory
+shutil.copy2('submit_all_jobs.sh', base_dir)
+
+#include extraction script
+shutil.copy2('extract_results.sh', base_dir)
+
 exclude_files = [base_dir, 'script_generator.py', 'scratch.py', '.gitignore', 'submit_all_jobs.sh',
-                 '.git', 'ML_Tests', 'main.py', 'submission_file.sh', 'validation.py', 'archive_dev']
+                 '.git', 'ML_Tests', 'main.py', 'submission_file.sh', 'validation','validator.py', 'archive']
 
 # Function to create new directories and scripts
-def create_test_dir(model, optimizer, optimizer_type, clipping_rate, learning_rate, loss_inst, feature_selector):
+def create_test_dir(n_epochs, seed, model, optimizer, optimizer_type, clipping_rate, learning_rate, loss_inst, feature_selector):
     cr_str = 'NoClip' if clipping_rate is None else f'CR{clipping_rate}'
     loss_name = loss_inst.split('(')[0].split('.')[1]
     feature_name = feature_selector.split('(')[0].split('.')[1]
     learn_rate_name = str(learning_rate).split('.')[1]
-    dir_name = f"{model}_{optimizer_type}_{cr_str}_LR{learn_rate_name}_{loss_name}_{feature_name}"
+    #set the directory name
+    dir_name = f"{model}_{optimizer_type}_n{n_epochs}_{cr_str}_LR{learn_rate_name}_{loss_name}_{feature_name}"
     dir_path = os.path.join(base_dir, dir_name)
     os.makedirs(dir_path, exist_ok=True)
 
@@ -53,6 +63,13 @@ def create_test_dir(model, optimizer, optimizer_type, clipping_rate, learning_ra
 
     updated_main_content = []
     for line in main_content:
+        #use the generator flag to switch between the two training loops
+        if 'generator = False' in line:
+            line = line.replace('generator = False', 'generator = True')
+        if 'EPOCH_PLACEHOLDER' in line:
+            line = line.replace('EPOCH_PLACEHOLDER', str(n_epochs))
+        if 'SEED_PLACEHOLDER' in line:
+            line = line.replace('SEED_PLACEHOLDER', str(seed))
         if 'MODEL_PLACEHOLDER' in line:
             line = line.replace('MODEL_PLACEHOLDER', model)
         if 'LR_PLACEHOLDER' in line:
@@ -99,11 +116,12 @@ def create_test_dir(model, optimizer, optimizer_type, clipping_rate, learning_ra
                 shutil.copy2(src_path, dst_path)
 
 # Generate directories and scripts for each configuration
-for model in models:
-    for index, optimizer in enumerate(optimizers):
-        optimizer_type = optimizer.split('.')[1]
-        for loss_inst, feature_selector, learning_rate, _ in combinations:
+for seed in seeds:
+    for model in models:
+        for index, optimizer in enumerate(optimizers):
+            optimizer_type = optimizer.split('.')[1]
             for clipping_rate in clipping_rates:
-                create_test_dir(model, optimizer, optimizer_type, clipping_rate, learning_rate, loss_inst, feature_selector)
+                for loss_inst, feature_selector, learning_rate, n_epochs in combinations:
+                    create_test_dir(n_epochs, seed, model, optimizer, optimizer_type, clipping_rate, learning_rate, loss_inst, feature_selector)
 
 print("All tests generated successfully!")

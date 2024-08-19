@@ -50,7 +50,7 @@ if __name__ == '__main__':
     #working directory
     working_directory = 'wd_dev'
     #archive directory
-    archive_directory = 'archive_dev'
+    archive_directory = 'archive'
     #experiment name for the abaqus simulation
     expname = 'H_10'
 
@@ -87,16 +87,19 @@ if __name__ == '__main__':
     if not cluster:
         num_cpus = 4
 
-    #set number of training epochs
-    epochs = 500
 
-    #set the random seed
-    torch.manual_seed(37)
 
-    generator = True
+
+
+    generator = False
     if generator:
+
+        #set number of training epochs
+        epochs = EPOCH_PLACEHOLDER
         # Define the models to test
         model = models.MODEL_PLACEHOLDER()
+
+        torch.manual_seed(SEED_PLACEHOLDER)
 
         # Define the learning rate
         lr = LR_PLACEHOLDER
@@ -110,18 +113,23 @@ if __name__ == '__main__':
 
         loss_inst = LOSS_INST_PLACEHOLDER
     else:
+        #set number of training epochs
+        epochs = 1
+
+        #set the random seed
+        torch.manual_seed(37)
         # Define the model
         model = models.SimpleModel()
 
         # Define the learning rate
-        lr = 0.001
+        lr = 0.005
 
         # Define the optimizer
         optimizer = optim.RMSprop(model.parameters(), lr=lr)
 
-        clipping_rate = None
+        clipping_rate = 10
 
-        feauture_selector = tf.DynamicFilter001
+        feauture_selector = tf.EnforceS33Direction
 
         loss_inst = tf.MSE()
 

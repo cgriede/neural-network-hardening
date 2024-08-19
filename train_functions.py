@@ -44,7 +44,12 @@ class MSE(Loss):
         return self.value
     
     def gradient(self):
-        return 2 * (self.output - self.target) / len(self.output)
+        if isinstance(self.output, float):
+            length = 1
+        else:
+            length = len(self.output)
+
+        return 2 * (self.output - self.target) / length
     
 class WSE(Loss):
     def __init__(self, mul: float, threshold: float):
@@ -69,7 +74,7 @@ class WSE(Loss):
     
 class FeatureSelector:
     def __init__(self):
-        self.filtered_elements = set()
+        self.contact_elements = set()
         self.gradient_list = []
         self.input_strain_list = []
         self.info_df = pd.DataFrame()
@@ -79,111 +84,6 @@ class FeatureSelector:
 
     def select_features(self, loss, force_loss_df, element_dict):
         raise NotImplementedError("Subclasses should implement this method")
-    
-class StandardFilter(FeatureSelector):
-    def __init__(self,):
-        super().__init__()
-
-    def select_features(self, loss, force_loss_df, element_dict):
-        self.loss = loss
-        self.force_loss_df = force_loss_df
-        self.element_dict = element_dict
-
-        filtered_elements = set()
-
-        sigma_33_list = []
-        sigma_vm_list = []
-        force_contribution_list = []
-        area_xy_list = []
-        dS33_dSvm_list = []
-        dErr_dFsim_list = []
-        element_list = []
-        time_list = []
-        gradient_list = []
-        strain_list = []
-        
-
-        dErr_dFsim = self.loss.gradient()
-        self.force_loss_df = pd.concat([self.force_loss_df, pd.Series(dErr_dFsim, name='dErr_dFsim')], axis=1)
-
-        #iterate over displacements
-        for index, row in self.force_loss_df.iterrows():
-            dErr_dFsim = row['dErr_dFsim']
-            #iterate over elements
-            for key, element in self.element_dict.items():
-                #get the plastic scalars dataframe
-                plastic_scalars_df = element['plastic_scalars_df']
-
-                # Extract stresses
-                sigma_11 = plastic_scalars_df.iloc[index]['S11']
-                sigma_22 = plastic_scalars_df.iloc[index]['S22']
-                sigma_33 = plastic_scalars_df.iloc[index]['S33']
-
-                #filter for low strains that cause exploding gradients
-                strain = plastic_scalars_df.iloc[index]['PEEQ']
-                if strain < 0.0005:
-                    filtered_elements.add(key)
-                    continue
-
-                #filter positive S33 values (only interested in compression)
-                if sigma_33 > -0.0001:
-                    filtered_elements.add(key)
-                    continue
-                
-                # Ensure significant sigma_33 contribution
-                if not (2 * abs(sigma_33) > abs(sigma_11 + sigma_22)):
-                    filtered_elements.add(key)
-                    continue
-
-                #append the stresses to the stress lists
-                sigma_33_list.append(sigma_33)
-                sigma_vm = plastic_scalars_df.iloc[index]['MISES']
-                sigma_vm_list.append(sigma_vm)
-
-                #Area of the element (xy-plane) = dF_element/dS33
-                area_xy = plastic_scalars_df.iloc[index]['Area_XY']
-                area_xy_list.append(area_xy)
-
-                #total force of time step
-
-                #Force contribution of the element, force in negative z direction
-                force_contribution = - area_xy * sigma_33
-                force_contribution_list.append(force_contribution)
-
-                #dS33/dSvm
-                dS33_dSvm = plastic_scalars_df.iloc[index]['dS33_dSvm']
-                dS33_dSvm_list.append(dS33_dSvm)
-
-
-                #final gradient applying the chain rule, attention to the negative sign
-                #force error is in negatve z direction therefore the gradient is negative
-                dFsim_dSvm = -dS33_dSvm*area_xy
-                grad = dErr_dFsim*dFsim_dSvm
-
-                #grad_displacement.append(grad)
-                gradient_list.append(grad)
-                strain_list.append(strain)
-
-                #append debugging data
-                dErr_dFsim_list.append(dErr_dFsim)
-                element_list.append(key)
-                time_list.append(plastic_scalars_df.iloc[index]['X'])
-
-        self.info_df = pd.DataFrame({
-            'time': time_list,
-            'dErr_dFsim': dErr_dFsim_list,
-            'Area_XY': area_xy_list,
-            'dS33_dSvm': dS33_dSvm_list,
-            'element': element_list,
-            'sigma_33': sigma_33_list,
-            'sigma_vm': sigma_vm_list,
-            'force_contribution': force_contribution_list,
-            'grad': gradient_list,
-            'strain': strain_list
-            })
-        self.filtered_elements = filtered_elements
-        self.gradient_list = gradient_list
-        self.input_strain_list = strain_list
 
 
 class ModelTrainer:
@@ -257,13 +157,16 @@ class ModelTrainer:
         self.strain_tensor = strain_tensor
         #default strain tensor
         if self.strain_tensor is None:
+            # Very small strains: 20 points, spacing of 0.00005
             s_very_small = torch.linspace(0, 0.00095, 20, dtype=torch.float64)
-            s_small = torch.linspace(0.001, 0.0095, 20, dtype=torch.float64)
-            s_medium = torch.linspace(0.01, 0.0495, 20, dtype=torch.float64)
-            s_medium_large = torch.linspace(0.05, 0.4, 30, dtype=torch.float64)
-            s_large = torch.linspace(0.4, 0.7, 20, dtype=torch.float64)
-
-            self.strain_tensor = torch.cat((s_very_small, s_small, s_medium, s_medium_large, s_large)).unsqueeze(1)
+            # Small strains: 18 points, spacing of 0.0005 (starts from 0.001, after s_very_small ends)
+            s_small = torch.linspace(0.001, 0.0095, 18, dtype=torch.float64)
+            # Medium strains: 79 points, spacing of 0.005 (starts from 0.01, after s_small ends)
+            s_medium = torch.linspace(0.01, 0.4, 79, dtype=torch.float64)
+            # Large strains: 16 points, spacing of 0.02 (starts from 0.42 to avoid overlap with s_medium)
+            s_large = torch.linspace(0.42, 0.7, 15, dtype=torch.float64)
+            # Concatenate all strain tensors to ensure there are no duplicates
+            self.strain_tensor = torch.cat((s_very_small, s_small, s_medium, s_large)).unsqueeze(1)
 
     def set_scheduler(self, scheduler):
         self.scheduler = scheduler
@@ -396,6 +299,7 @@ class ModelTrainer:
             #apply clipping if specified
             if self.clip is not None:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
+            
 
             self.optimizer.step()
 
@@ -438,6 +342,461 @@ class ModelTrainer:
             if ABORT:
                 break
         self.summary.write_summary()
+
+    
+class StandardFilter(FeatureSelector):
+    def __init__(self,):
+        super().__init__()
+
+    def select_features(self, loss, force_loss_df, element_dict):
+        self.loss = loss
+        self.force_loss_df = force_loss_df
+        self.element_dict = element_dict
+
+
+        sigma_33_list = []
+        sigma_vm_list = []
+        force_contribution_list = []
+        area_xy_list = []
+        dS33_dSvm_list = []
+        dErr_dFsim_list = []
+        element_list = []
+        time_list = []
+        gradient_list = []
+        strain_list = []
+        
+
+        dErr_dFsim = self.loss.gradient()
+        self.force_loss_df = pd.concat([self.force_loss_df, pd.Series(dErr_dFsim, name='dErr_dFsim')], axis=1)
+
+
+
+        # Function to calculate dynamic strain threshold
+        def dynamic_strain_threshold(X, X_min=0, X_max=1):
+            threshold_min = 0.0008
+            threshold_max = 0.1
+            return threshold_min + ((X - X_min) / (X_max - X_min)) * (threshold_max - threshold_min)
+
+        # Function to calculate dynamic stress threshold
+        def dynamic_stress_threshold(X, X_min=0, X_max=1):
+            stress_min = -0.5
+            stress_max = -5.0
+            return stress_min + ((X - X_min) / (X_max - X_min)) * (stress_max - stress_min)
+
+        # Get the minimum and maximum displacement
+        X_min = self.force_loss_df['displacement'].min()
+        X_max = self.force_loss_df['displacement'].max()
+
+
+        initial_elements_set = set(element_dict.keys())
+        #initialize contact elements
+        contact_elements = set()
+        contact_elements_list = []
+        time_int_list = []
+        # Iterate over displacements
+        for index, row in self.force_loss_df.iterrows():
+            displacement = row['displacement']
+            time = row['X']
+            time_int = int(time)
+            time_int_list.append(time_int)
+
+            dErr_dFsim = row['dErr_dFsim']
+            
+            # Calculate the current dynamic thresholds for strain and stress
+            current_strain_threshold = dynamic_strain_threshold(displacement, X_min, X_max)
+            current_stress_threshold = dynamic_stress_threshold(displacement, X_min, X_max)
+            
+            # Iterate over elements
+            filtered_elements = set()
+            for key, element in element_dict.items():
+                # Get the plastic scalars dataframe
+                plastic_scalars_df = element['plastic_scalars_df']
+
+                # Extract stresses
+                sigma_11 = plastic_scalars_df.iloc[index]['S11']
+                sigma_22 = plastic_scalars_df.iloc[index]['S22']
+                sigma_33 = plastic_scalars_df.iloc[index]['S33']
+
+                # Filter based on the dynamic threshold for strain
+                strain = plastic_scalars_df.iloc[index]['PEEQ']
+
+                if not (key in contact_elements):
+                    if strain < current_strain_threshold:
+                        filtered_elements.add(key)
+                        continue
+
+                    # Filter based on the dynamic threshold for stress
+                    if ((sigma_33 - current_stress_threshold) > 0):
+                        filtered_elements.add(key)
+                        continue
+                #append the stresses to the stress lists
+                sigma_33_list.append(sigma_33)
+                sigma_vm = plastic_scalars_df.iloc[index]['MISES']
+                sigma_vm_list.append(sigma_vm)
+
+                #Area of the element (xy-plane) = dF_element/dS33
+                area_xy = plastic_scalars_df.iloc[index]['Area_XY']
+                area_xy_list.append(area_xy)
+
+                #total force of time step
+
+                #Force contribution of the element, force in negative z direction
+                force_contribution = - area_xy * sigma_33
+                force_contribution_list.append(force_contribution)
+
+                #dS33/dSvm
+                dS33_dSvm = plastic_scalars_df.iloc[index]['dS33_dSvm']
+                dS33_dSvm_list.append(dS33_dSvm)
+
+
+                #final gradient applying the chain rule, attention to the negative sign
+                #force error is in negatve z direction therefore the gradient is negative
+                dFsim_dSvm = -dS33_dSvm*area_xy
+                grad = dErr_dFsim*dFsim_dSvm
+
+                #grad_displacement.append(grad)
+                gradient_list.append(grad)
+                strain_list.append(strain)
+
+                #append debugging data
+                dErr_dFsim_list.append(dErr_dFsim)
+                element_list.append(key)
+                time_list.append(plastic_scalars_df.iloc[index]['X'])
+                        
+            unfiltered_elements_set = initial_elements_set - filtered_elements
+            contact_elements = contact_elements.union(unfiltered_elements_set)
+            contact_elements_list.append(contact_elements)
+        
+
+    #must always return this
+        self.info_df = pd.DataFrame({
+            'time': time_list,
+            'dErr_dFsim': dErr_dFsim_list,
+            'Area_XY': area_xy_list,
+            'dS33_dSvm': dS33_dSvm_list,
+            'element': element_list,
+            'sigma_33': sigma_33_list,
+            'sigma_vm': sigma_vm_list,
+            'force_contribution': force_contribution_list,
+            'grad': gradient_list,
+            'strain': strain_list
+            })
+        self.filtered_elements = filtered_elements
+        self.gradient_list = gradient_list
+        self.input_strain_list = strain_list
+
+class EnforceS33Direction(FeatureSelector):
+    def __init__(self,):
+        super().__init__()
+
+    def select_features(self, loss, force_loss_df, element_dict):
+        self.loss = loss
+        self.force_loss_df = force_loss_df
+        self.element_dict = element_dict
+
+
+        sigma_33_list = []
+        sigma_vm_list = []
+        force_contribution_list = []
+        area_xy_list = []
+        dS33_dSvm_list = []
+        dErr_dFsim_list = []
+        element_list = []
+        time_list = []
+        gradient_list = []
+        strain_list = []
+        
+
+        dErr_dFsim = self.loss.gradient()
+        self.force_loss_df = pd.concat([self.force_loss_df, pd.Series(dErr_dFsim, name='dErr_dFsim')], axis=1)
+
+
+
+        # Function to calculate dynamic strain threshold
+        def dynamic_strain_threshold(X, X_min=0, X_max=1):
+            threshold_min = 0.0008
+            threshold_max = 0.1
+            return threshold_min + ((X - X_min) / (X_max - X_min)) * (threshold_max - threshold_min)
+
+        # Function to calculate dynamic stress threshold
+        def dynamic_stress_threshold(X, X_min=0, X_max=1):
+            stress_min = -0.5
+            stress_max = -5.0
+            return stress_min + ((X - X_min) / (X_max - X_min)) * (stress_max - stress_min)
+
+        # Get the minimum and maximum displacement
+        X_min = self.force_loss_df['displacement'].min()
+        X_max = self.force_loss_df['displacement'].max()
+
+
+        initial_elements_set = set(element_dict.keys())
+        #initialize contact elements
+        contact_elements = set()
+        contact_elements_list = []
+        time_int_list = []
+        # Iterate over displacements
+        for index, row in self.force_loss_df.iterrows():
+            displacement = row['displacement']
+            time = row['X']
+            time_int = int(time)
+            time_int_list.append(time_int)
+
+            dErr_dFsim = row['dErr_dFsim']
+            
+            # Calculate the current dynamic thresholds for strain and stress
+            current_strain_threshold = dynamic_strain_threshold(displacement, X_min, X_max)
+            current_stress_threshold = dynamic_stress_threshold(displacement, X_min, X_max)
+            
+            # Iterate over elements
+            filtered_elements = set()
+            for key, element in element_dict.items():
+                # Get the plastic scalars dataframe
+                plastic_scalars_df = element['plastic_scalars_df']
+
+                # Extract stresses
+                sigma_11 = plastic_scalars_df.iloc[index]['S11']
+                sigma_22 = plastic_scalars_df.iloc[index]['S22']
+                sigma_33 = plastic_scalars_df.iloc[index]['S33']
+
+                # Filter based on the dynamic threshold for strain
+                strain = plastic_scalars_df.iloc[index]['PEEQ']
+
+                if not (key in contact_elements):
+                    if strain < current_strain_threshold:
+                        filtered_elements.add(key)
+                        continue
+
+                    # Filter based on the dynamic threshold for stress
+                    if ((sigma_33 - current_stress_threshold) > 0):
+                        filtered_elements.add(key)
+                        continue
+                
+                #append the stresses to the stress lists
+                sigma_33_list.append(sigma_33)
+                sigma_vm = plastic_scalars_df.iloc[index]['MISES']
+                sigma_vm_list.append(sigma_vm)
+
+                #Area of the element (xy-plane) = dF_element/dS33
+                area_xy = plastic_scalars_df.iloc[index]['Area_XY']
+                area_xy_list.append(area_xy)
+
+                #total force of time step
+
+                #Force contribution of the element, force in negative z direction
+                force_contribution = - area_xy * sigma_33
+                force_contribution_list.append(force_contribution)
+
+                #dS33/dSvm
+                dS33_dSvm = plastic_scalars_df.iloc[index]['dS33_dSvm']
+                dS33_dSvm_list.append(dS33_dSvm)
+
+
+                #final gradient applying the chain rule, attention to the negative sign
+                #force error is in negatve z direction therefore the gradient is negative
+                dFsim_dSvm = -dS33_dSvm*area_xy
+
+                if np.sign(sigma_33) == np.sign(dS33_dSvm):
+                    grad = dErr_dFsim*dFsim_dSvm
+
+                else:
+                    grad = -np.sign(sigma_33)*dErr_dFsim
+                #grad_displacement.append(grad)
+                gradient_list.append(grad)
+                strain_list.append(strain)
+
+                #append debugging data
+                dErr_dFsim_list.append(dErr_dFsim)
+                element_list.append(key)
+                time_list.append(plastic_scalars_df.iloc[index]['X'])
+                        
+            unfiltered_elements_set = initial_elements_set - filtered_elements
+            contact_elements = contact_elements.union(unfiltered_elements_set)
+            contact_elements_list.append(contact_elements)
+        
+
+    #must always return this
+        self.info_df = pd.DataFrame({
+            'time': time_list,
+            'dErr_dFsim': dErr_dFsim_list,
+            'Area_XY': area_xy_list,
+            'dS33_dSvm': dS33_dSvm_list,
+            'element': element_list,
+            'sigma_33': sigma_33_list,
+            'sigma_vm': sigma_vm_list,
+            'force_contribution': force_contribution_list,
+            'grad': gradient_list,
+            'strain': strain_list
+            })
+        self.filtered_elements = filtered_elements
+        self.gradient_list = gradient_list
+        self.input_strain_list = strain_list
+
+class BoundaryCondition(FeatureSelector):
+    def __init__(self,):
+        super().__init__()
+        self.features_per_displacement = None
+
+    def select_features(self, loss, force_loss_df, element_dict):
+        self.loss = loss
+        self.force_loss_df = force_loss_df
+        self.element_dict = element_dict
+
+        sigma_33_list = []
+        sigma_vm_list = []
+        force_contribution_list = []
+        area_xy_list = []
+        dS33_dSvm_list = []
+        dErr_dFsim_list = []
+        element_list = []
+        time_list = []
+        gradient_list = []
+        strain_list = []
+
+        dErr_dFsim = self.loss.gradient()
+        self.force_loss_df = pd.concat([self.force_loss_df, pd.Series(dErr_dFsim, name='dErr_dFsim')], axis=1)
+
+        def dynamic_strain_threshold(X, X_min=0, X_max=1):
+            threshold_min = 0.0008
+            threshold_max = 0.1
+            return threshold_min + ((X - X_min) / (X_max - X_min)) * (threshold_max - threshold_min)
+
+        def dynamic_stress_threshold(X, X_min=0, X_max=1):
+            stress_min = -0.5
+            stress_max = -5.0
+            return stress_min + ((X - X_min) / (X_max - X_min)) * (stress_max - stress_min)
+        
+        def find_zero_strain_gradient():
+
+        #lower bound: 5e-05
+        #upper bound: 500e-06 = 5e-04
+            lower_bound = 5e-05
+            upper_bound = 5e-04
+
+            zero_strain_prediction = None
+            # Find the zero-strain prediction
+
+            for element in element_dict.values():
+                # Get the plastic scalars dataframe
+                plastic_scalars_df = element['plastic_scalars_df']
+                
+                # Filter the dataframe where PEEQ is within the specified bounds and get the MISES value
+                zero_strain_prediction = plastic_scalars_df.loc[
+                    (plastic_scalars_df['PEEQ'] >= lower_bound) & (plastic_scalars_df['PEEQ'] <= upper_bound), 'MISES'
+                ]
+                
+                if not zero_strain_prediction.empty:
+                    print(f'Zero strain prediction found: {zero_strain_prediction.values[0]}')
+                    zero_strain_prediction_value = zero_strain_prediction.values[0]
+                    break  # Exit after finding the first match
+
+            if zero_strain_prediction is None:
+                raise ValueError('No elements found within the specified bounds')
+            #gradient = 2*(output - target) = 2*(zero_strain_prediction - 0)
+            zero_strain_gradient = 2*zero_strain_prediction_value
+            return float(zero_strain_gradient)
+
+        X_min = self.force_loss_df['displacement'].min()
+        X_max = self.force_loss_df['displacement'].max()
+
+        initial_elements_set = set(element_dict.keys())
+        contact_elements = set()
+        contact_elements_list = []
+        time_int_list = []
+
+        zero_strain_gradient = find_zero_strain_gradient()
+
+        if self.features_per_displacement is None:
+            self.features_per_displacement = len(element_dict)
+
+        for index, row in self.force_loss_df.iterrows():
+            displacement = row['displacement']
+            time = row['X']
+            time_int = int(time)
+            time_int_list.append(time_int)
+
+            dErr_dFsim = row['dErr_dFsim']
+            current_strain_threshold = dynamic_strain_threshold(displacement, X_min, X_max)
+            current_stress_threshold = dynamic_stress_threshold(displacement, X_min, X_max)
+
+            filtered_elements = set()
+            feature_count = 0
+            for key, element in element_dict.items():
+                plastic_scalars_df = element['plastic_scalars_df']
+                sigma_11 = plastic_scalars_df.iloc[index]['S11']
+                sigma_22 = plastic_scalars_df.iloc[index]['S22']
+                sigma_33 = plastic_scalars_df.iloc[index]['S33']
+                strain = plastic_scalars_df.iloc[index]['PEEQ']
+
+
+                if key in contact_elements:
+                    sigma_33_list.append(sigma_33)
+                    sigma_vm = plastic_scalars_df.iloc[index]['MISES']
+                    sigma_vm_list.append(sigma_vm)
+                    area_xy = plastic_scalars_df.iloc[index]['Area_XY']
+                    area_xy_list.append(area_xy)
+                    force_contribution = -area_xy * sigma_33
+                    force_contribution_list.append(force_contribution)
+                    dS33_dSvm = plastic_scalars_df.iloc[index]['dS33_dSvm']
+                    dS33_dSvm_list.append(dS33_dSvm)
+
+                    dFsim_dSvm = -dS33_dSvm * area_xy
+                    grad = dErr_dFsim * dFsim_dSvm
+                    
+                    gradient_list.append(grad)
+                    strain_list.append(strain)
+                    dErr_dFsim_list.append(dErr_dFsim)
+                    element_list.append(key)
+                    time_list.append(plastic_scalars_df.iloc[index]['X'])
+                    feature_count += 1
+                else:
+                    if strain < current_strain_threshold:
+                        filtered_elements.add(key)
+                        continue
+                    if ((sigma_33 - current_stress_threshold) > 0):
+                        filtered_elements.add(key)
+                        continue
+
+            padding_number = self.features_per_displacement - feature_count
+            for i in range(padding_number):
+                sigma_33_list.append(0)
+                sigma_vm_list.append(0)
+                area_xy_list.append(0)
+                force_contribution_list.append(0)
+                dS33_dSvm_list.append(0)
+
+                strain = 0
+                #scale down boundary condition by 10% and to force error scale
+                grad = zero_strain_gradient * 0.1 * dErr_dFsim
+                
+                gradient_list.append(grad)
+                strain_list.append(strain)
+                dErr_dFsim_list.append(0)
+                element_list.append(0)
+                time_list.append(row['X'])
+
+            unfiltered_elements_set = initial_elements_set - filtered_elements
+            contact_elements = contact_elements.union(unfiltered_elements_set)
+            contact_elements_list.append(contact_elements)
+
+        #take last element of the list to get the number of features per displacement
+        self.features_per_displacement = len(contact_elements_list[-1])
+
+        self.info_df = pd.DataFrame({
+            'time': time_list,
+            'dErr_dFsim': dErr_dFsim_list,
+            'Area_XY': area_xy_list,
+            'dS33_dSvm': dS33_dSvm_list,
+            'element': element_list,
+            'sigma_33': sigma_33_list,
+            'sigma_vm': sigma_vm_list,
+            'force_contribution': force_contribution_list,
+            'grad': gradient_list,
+            'strain': strain_list
+            })
+        self.gradient_list = gradient_list
+        self.input_strain_list = strain_list
+        self.filtered_elements = filtered_elements
+
 
 
 class DynamicFilter0005(FeatureSelector):
@@ -485,40 +844,8 @@ class DynamicFilter0005(FeatureSelector):
         dErr_dFsim = self.loss.gradient()
         self.force_loss_df = pd.concat([self.force_loss_df, pd.Series(dErr_dFsim, name='dErr_dFsim')], axis=1)
 
-        #iterate over displacements
-        for index, row in self.force_loss_df.iterrows():
-
-            #only use the first part of the displacement
-            if index > use_displacement_index:
-                break
-
-            dErr_dFsim = row['dErr_dFsim']
-            #iterate over elements
-            for key, element in self.element_dict.items():
-                #get the plastic scalars dataframe
-                plastic_scalars_df = element['plastic_scalars_df']
-
-                # Extract stresses
-                sigma_11 = plastic_scalars_df.iloc[index]['S11']
-                sigma_22 = plastic_scalars_df.iloc[index]['S22']
-                sigma_33 = plastic_scalars_df.iloc[index]['S33']
-
-                #filter for low strains that cause exploding gradients
-                strain = plastic_scalars_df.iloc[index]['PEEQ']
-                if strain < 0.0005:
-                    filtered_elements.add(key)
-                    continue
-
-                #filter positive S33 values (only interested in compression)
-                if sigma_33 > -0.0001:
-                    filtered_elements.add(key)
-                    continue
-                
-                # Ensure significant sigma_33 contribution
-                if not (2 * abs(sigma_33) > abs(sigma_11 + sigma_22)):
-                    filtered_elements.add(key)
-                    continue
-
+        #TODO
+        if False:
                 #append the stresses to the stress lists
                 sigma_33_list.append(sigma_33)
                 sigma_vm = plastic_scalars_df.iloc[index]['MISES']

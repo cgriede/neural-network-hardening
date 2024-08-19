@@ -361,6 +361,34 @@ class AbaqusInputFile:
             # Append the new section at the end
             self.lines.extend(new_section)
 
+    def write_contact_element_set_input(contact_elements_list, time_int_list, time_intervals, filename='contact_element_sets.inp'):
+        """
+        Writes contact element sets to an input file for specified time intervals.
+
+        Parameters:
+        contact_elements_list (list of sets): List of sets containing contact elements for each time step.
+        force_loss_df (DataFrame): DataFrame containing the simulation data with a column 'X' representing time.
+        time_intervals (list of int): List of time intervals at which to write the element sets.
+        filename (str): Name of the output file.
+        """
+        with open(filename, 'w') as file:
+            for index, time in enumerate(time_int_list):
+                if time not in time_intervals:
+                    continue
+                # Find the corresponding index for the time interval
+                contact_elements = contact_elements_list[index]
+                
+                # Write the header for the element set
+                file.write(f"*Elset, elset=ContactElements_{time}\n")
+                
+                # Write the elements in rows of 8
+                elements = list(contact_elements)
+                for i in range(0, len(elements), 8):
+                    line = ', '.join(f'{el:6}' for el in elements[i:i+8])
+                    file.write(f'  {line}\n')
+
+
+
 class ExperimentData:
     def __init__(self, directory_path, name):
         self.name = name
@@ -399,7 +427,6 @@ class ExperimentData:
         for file in exp_data:
             if file == f'{self.name}.csv':
                 return file
-
 class AbaqusOutputFile:
     def __init__(self, directory_path, name):
 
@@ -809,6 +836,26 @@ class AbaqusOutputFile:
             self.model_data_df = df1_interpolated.reindex(df2.index).reset_index()
             df2 = df2.reset_index()
 
+class AbaqusOutputValidationFile(AbaqusOutputFile):
+    def __init__(self, directory_path, name):
+        self.directory_path = directory_path  # Folder path
+        self.name = name
+
+        self.rpt_path = file_picker(directory_path, self.name, extension=".rpt")
+
+        self.lines = []
+        self.data_sections = {}
+
+        self.initial_distance = 0.1
+        
+        
+        time_parse_start = datetime.now()
+        self.read_file()
+        self.parse_sections()
+        print(f"Time to parse sections: {datetime.now() - time_parse_start}")
+
+        self.model_data_df = None
+        self.model_data_df = self.create_model_data()
 
 def abaqus_runtime_status(directory_name, sim_name):
     """
@@ -935,60 +982,65 @@ def simulator(mat_prop_tensor, working_directory, name, run_simulation = False, 
 
 
 class TestrunSummaryWriter:
-    def __init__(self, test_name, test_description, optimizer, train_loop_description, expname,
-                 learning_rate, number_of_epochs, archive_directory, working_directory, model):
-        
-        # Inputs for the report
-        self.test_name = test_name
-        self.test_description = test_description
-        self.optimizer = optimizer
-        #get str representation of optimizer
-        self.optimizer = self.optimizer.__class__.__name__
-        self.train_loop_description = train_loop_description
-        self.expname = expname
-        self.learning_rate = learning_rate
-        self.number_of_epochs = number_of_epochs
+    def __init__(self, archive_directory, working_directory, validation=False, test_name= None, test_description = None, optimizer= None, train_loop_description= None, expname = None,
+                 learning_rate= None, number_of_epochs= None, model=None, ):
+        self.validation = validation
         self.archive_directory = archive_directory
         self.working_directory = working_directory
-        self.model = model
-        
-        # Initialize empty lists for metrics
-        self.loss_epoch_dict = {}
-        self.loss_df_dict = {}
-        self.mat_tensor_dict = {}
-        self.backprop_element_df_dict = {}
-        self.filtered_elements_dict = {}
-        self.model_dict = {}
-        self.save_epoch = False
-
-        self.loss_epoch_list = []
-
-        self.master_df = pd.DataFrame()
-
-        # Ensure the archive directory exists
+        #ensure the archive directory exists
         self.ensure_archive_exists()
-        
-        # Generate subdirectory in the archive directory
+        #generate subdirectory in the archive directory
         date = datetime.now().strftime('%Y%m%d_%H')
         count = 0
         while True:
-            self.out_dir = os.path.join(archive_directory, f"{date}_{count}_{self.test_name}")
+            self.out_dir = os.path.join(archive_directory, f"{date}_{count}_{test_name}")
             if not os.path.exists(self.out_dir):
                 break
             count += 1
         os.makedirs(self.out_dir)
-
         self.parent_out_directory = self.out_dir
+        
+        #initialize the loss_df_dict
+        self.loss_df_dict = {}
 
-        #create epochs list to save in memory
-        self.evenspaced_epochs = self.evenspaced_epochs()
-        self.epoch_loss_dict = {}
+        if not validation:
+            # Inputs for the report
+            self.test_name = test_name
+            self.test_description = test_description
+            self.optimizer = optimizer
+            #get str representation of optimizer
+            self.optimizer = self.optimizer.__class__.__name__
+            self.train_loop_description = train_loop_description
+            self.expname = expname
+            self.learning_rate = learning_rate
+            self.number_of_epochs = number_of_epochs
+            self.model = model
+            
+            # Initialize empty lists for metrics
+            self.loss_epoch_dict = {}
+            self.mat_tensor_dict = {}
+            self.backprop_element_df_dict = {}
+            self.filtered_elements_dict = {}
+            self.model_dict = {}
+            self.save_epoch = False
 
-        self.epochs_to_remove = set()
+            self.loss_epoch_list = []
+
+            self.master_df = pd.DataFrame()
+
+            #create epochs list to save in memory
+            self.evenspaced_epochs = self.evenspaced_epochs()
+            self.epoch_loss_dict = {}
+
+            self.epochs_to_remove = set()
 
     def ensure_archive_exists(self):
-        if not os.path.exists(self.archive_dir):
-            os.makedirs(self.archive_dir)
+        if not os.path.exists(self.archive_directory):
+            os.makedirs(self.archive_directory)
+    
+    def validation_summary(self, title, loss_df):
+        self.loss_df_dict[0] = loss_df
+        self.force_plot(title=title, epochs_to_plot=0)
 
     def checkpoint(self,
         current_epoch: int,
@@ -1194,8 +1246,28 @@ class TestrunSummaryWriter:
         return colormap(epoch / total_epochs)
 
 
-        
     def write_summary(self):
+        #reinitialize output directory
+        self.out_dir = os.path.join(self.parent_out_directory, 'summary')
+        os.makedirs(self.out_dir)
+
+        evenspaced_epochs = self.evenspaced_epochs
+        self.save_debug_frames(epochs_to_save=evenspaced_epochs)
+        self.epoch_loss_plt()
+        self.epoch_logloss_plt()
+        self.kNN_plt(title= 'epoch selection',epochs_to_plot=evenspaced_epochs)
+        self.force_plot(title= 'epoch selection', epochs_to_plot=evenspaced_epochs)
+        self.write_report()
+
+        self.out_dir = os.path.join(self.parent_out_directory, 'lowest_losses')
+        os.makedirs(self.out_dir)
+
+        lowest_loss_epochs = self.epoch_loss_dict
+        self.save_debug_frames(epochs_to_save=lowest_loss_epochs)
+        self.kNN_plt(title= 'lowest losses',epochs_to_plot=lowest_loss_epochs)
+        self.force_plot(title= 'lowest losses', epochs_to_plot=lowest_loss_epochs)
+
+    def old_write_summary(self):
         #reinitialize output directory
         self.out_dir = os.path.join(self.parent_out_directory, 'summary')
         os.makedirs(self.out_dir)
@@ -1230,17 +1302,8 @@ class TestrunSummaryWriter:
             return epochs_list
 
     
-    def force_plot(self, title: str = '', epochs_to_plot: Union[int, dict, None] = None) -> None:
-        """
-        Plots the experimental and simulated forces for specified epochs and saves the plot and data to files.
+    def old_force_plot(self, title: str = '', epochs_to_plot: Union[int, dict, None] = None) -> None:
 
-        Args:
-            epochs_to_plot (Union[int, List[int], None]): Epoch(s) to plot. Can be a single epoch, a list of epochs, or None.
-                                                        If None, plots the epochs specified in self.epochs_to_plot.
-
-        Returns:
-            None
-        """
 
         if isinstance(epochs_to_plot, int):
             epochs_to_plot = [epochs_to_plot]
@@ -1278,7 +1341,75 @@ class TestrunSummaryWriter:
 
         plot_df.to_csv(os.path.join(self.out_dir, 'force_comparison.csv'), index=False)
 
-    def kNN_plt(self, title: str = '', epochs_to_plot: Union[int, dict, None] = None) -> None:
+
+    def force_plot(self, title: str = '', epochs_to_plot: Union[int, List[int], dict, None] = None) -> None:
+        """
+        Plots the experimental and simulated forces for specified epochs and saves the plot and data to files.
+
+        Args:
+            title (str): The title of the plot.
+            epochs_to_plot (Union[int, List[int], None]): Epoch(s) to plot. Can be a single epoch, a list of epochs, or None.
+                                                        If None, plots the epochs specified in self.epochs_to_plot.
+
+        Returns:
+            None
+        """
+
+        if isinstance(epochs_to_plot, int):
+            epochs_to_plot = [epochs_to_plot]
+        elif isinstance(epochs_to_plot, dict):
+            epochs_to_plot = list(epochs_to_plot.keys())
+        elif epochs_to_plot is None:
+            epochs_to_plot = self.epochs_to_plot
+
+
+        # Plot the experimental and simulated forces
+        plt.figure(figsize=(7, 7))
+
+        first_epoch_idx = epochs_to_plot[0]
+        displacement = self.loss_df_dict[first_epoch_idx]['displacement']
+        force_target = self.loss_df_dict[first_epoch_idx]['force_target']
+        
+        # Plot the experimental force with x markers
+        plt.plot(displacement, force_target, label='Experimental Force', color='red', linewidth=2)
+
+        for epoch in epochs_to_plot:
+            force_sim = self.loss_df_dict[epoch]['force_sim']
+            if not self.validation:
+                plt.plot(displacement, force_sim, label=f'Simulated Force, Epoch {epoch + 1}', 
+                        color=self.color_picker(epoch), linestyle='--', linewidth=2)
+            if self.validation:
+                plt.plot(displacement, force_sim, label=f'Simulated Force, validation', 
+                    color='blue', linestyle='--', linewidth=2)
+
+        plt.xlabel('Displacement [mm]', fontsize=16)
+        plt.ylabel('Force [N]', fontsize=16)
+        plt.title(f'Target and Simulated Forces Over Displacement {title}', fontsize=16)
+        if self.validation:
+            plt.title(f'Validation: Target and S Force {title}', fontsize=16)
+        plt.legend(loc='upper left', fontsize=16)
+        plt.grid(True)
+        plt.xlim(left=0)
+        plt.ylim(bottom=0)
+        plt.gca().yaxis.get_major_ticks()[0].label1.set_visible(False)  # Remove the 0 label on y-axis
+        plt.tight_layout()
+        savepath = os.path.join(self.out_dir, 'Force_Comparison.png')
+        if self.validation:
+            savepath = os.path.join(self.out_dir, f'Validation_{title}.png')
+        plt.savefig(savepath, bbox_inches='tight')
+        plt.close()
+
+        # Write data to CSV
+        columns = [displacement, force_target] + [self.loss_df_dict[epoch]['force_sim'] for epoch in epochs_to_plot]
+        plot_df = pd.concat(columns, axis=1)
+
+        # Set the column names
+        plot_df.columns = ['displacement', 'force_target'] + [f'force_sim_{epoch}' for epoch in epochs_to_plot]
+
+        plot_df.to_csv(os.path.join(self.out_dir, 'force_comparison.csv'), index=False)
+
+
+    def old_kNN_plt(self, title: str = '', epochs_to_plot: Union[int, dict, None] = None) -> None:
         """
         Plots the kNN model predictions for specified epochs and saves the plot and data to files.
 
@@ -1320,6 +1451,61 @@ class TestrunSummaryWriter:
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.savefig(os.path.join(self.out_dir, f'kNN.png'), bbox_inches='tight')
         plt.close()
+
+    def kNN_plt(self, title: str = '', epochs_to_plot: Union[int, List[int], dict, None] = None) -> None:
+        """
+        Plots the kNN model predictions for specified epochs and saves the plot and data to files.
+
+        Args:
+            title (str): The title of the plot.
+            epochs_to_plot (Union[int, List[int], None]): Epoch(s) to plot. Can be a single epoch, a list of epochs, or None.
+                                                        If None, plots the epochs specified in self.epochs_to_plot.
+
+        Returns:
+            None
+        """
+
+        if isinstance(epochs_to_plot, int):
+            epochs_to_plot = [epochs_to_plot]
+        elif isinstance(epochs_to_plot, dict):
+            epochs_to_plot = list(epochs_to_plot.keys())
+        elif epochs_to_plot is None:
+            epochs_to_plot = self.epochs_to_plot
+
+        # Initialize master_df with strain values as the index if strain is constant across epochs
+        key = list(self.mat_tensor_dict.keys())[0]
+        strain = list(self.mat_tensor_dict[key][:, 1].detach().numpy())  # Assuming the first tensor's strain values are representative
+        master_df = pd.DataFrame(strain, columns=['strain'])
+
+        # Generate plot of the kNN model prediction and save to df
+        plt.figure(figsize=(7, 7))
+        
+        for epoch, mat_tensor in self.mat_tensor_dict.items():
+            stress = list(mat_tensor[:, 0].detach().numpy())
+
+            # Plot specified epochs
+            if epoch in epochs_to_plot:
+                plt.plot(strain, stress, label=f'kNN Epoch {epoch + 1}', color=self.color_picker(epoch))
+                # Adding columns to the master_df
+                new_column = pd.DataFrame(stress, columns=[f'kNN(strain)_{epoch + 1}'])
+                master_df = pd.concat([master_df, new_column], axis=1)
+
+        # Write data to CSV        
+        master_df.to_csv(os.path.join(self.out_dir, 'kNN_master.csv'), index=False)
+
+        # Plot styling
+        plt.xlabel('Plastic Strain [-]', fontsize=16)
+        plt.ylabel('Yield Stress [MPa]', fontsize=16)
+        plt.title(f'kNN Model Prediction Epoch 150 {title}', fontsize=16)
+        plt.legend(loc='lower right', fontsize=16)
+        plt.grid(True)
+        plt.xlim(left=0)
+        plt.ylim(bottom=0)
+        plt.gca().yaxis.get_major_ticks()[0].label1.set_visible(False)  # Remove the 0 label on y-axis
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.out_dir, f'kNN.png'), bbox_inches='tight')
+        plt.close()
+
 
 
     def save_debug_frames(self, epochs_to_save: Union[int, dict, List[int], None] = None) -> None:
@@ -1549,7 +1735,6 @@ def interval_inspection(grad_list, strain_list, grad_list_unclipped = None, inte
     print("\nStrains:")
     print(strain_df)
 
-
 def histogram_plotter(list, num_bins, title, xlabel, ylabel, save_path):
 
     plt.hist(list, bins=num_bins)
@@ -1622,3 +1807,118 @@ def evaluate_data_failed_job(file_path):
     df = pd.DataFrame(data_list)
 
     return df
+
+
+class PlotGenerator:
+    def __init__(self, force_csv: str, knn_csv: str, output_dir: str):
+        """
+        Initialize the PlotGenerator class with paths to the CSV files and output directory.
+
+        Args:
+            force_csv (str): Path to the CSV file containing force comparison data.
+            knn_csv (str): Path to the CSV file containing kNN prediction data.
+            output_dir (str): Directory where the plots and processed data will be saved.
+        """
+        self.force_data = pd.read_csv(force_csv)
+        self.knn_data = pd.read_csv(knn_csv)
+        self.out_dir = output_dir
+        os.makedirs(self.out_dir, exist_ok=True)
+
+    def force_plot(self, title: str = '', epochs_to_plot: Union[int, List[int], dict, None] = None) -> None:
+        """
+        Plots the experimental and simulated forces for specified epochs and saves the plot and data to files.
+
+        Args:
+            title (str): The title of the plot.
+            epochs_to_plot (Union[int, List[int], Dict[int, str], None]): Epoch(s) to plot. Can be a single epoch, 
+                                                                          a list of epochs, or a dictionary where keys 
+                                                                          are epochs. If None, plots all available epochs.
+
+        Returns:
+            None
+        """
+
+        if isinstance(epochs_to_plot, int):
+            epochs_to_plot = [epochs_to_plot]
+        elif isinstance(epochs_to_plot, dict):
+            epochs_to_plot = list(epochs_to_plot.keys())
+        elif epochs_to_plot is None:
+            epochs_to_plot = [col.split('_')[-1] for col in self.force_data.columns if 'force_sim' in col]
+
+        plt.figure(figsize=(7, 7))
+
+        displacement = self.force_data['displacement']
+        force_target = self.force_data['force_target']
+
+        plt.plot(displacement, force_target, label='Experimental Force', color='red', marker='x', linewidth=2)
+
+        for epoch in epochs_to_plot:
+            force_sim = self.force_data[f'force_sim_{epoch}']
+            plt.plot(displacement, force_sim, label=f'Simulated Force, Epoch {epoch}', linestyle='--', linewidth=2)
+
+        plt.xlabel('Displacement [mm]', fontsize=16)
+        plt.ylabel('Force [N]', fontsize=16)
+        plt.title(f'Target and Simulated Forces Over Displacement {title}', fontsize=16)
+        plt.legend(loc='upper left', fontsize=16)
+        plt.grid(True)
+        plt.xlim(left=0)
+        plt.ylim(bottom=0)
+        plt.gca().yaxis.get_major_ticks()[0].label1.set_visible(False)  # Remove the 0 label on y-axis
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.out_dir, 'Force_Comparison.png'), bbox_inches='tight')
+        plt.close()
+
+    def kNN_plot(self, title: str = '', epochs_to_plot: Union[int, List[int], dict, None] = None) -> None:
+        """
+        Plots the kNN model predictions for specified epochs and saves the plot and data to files.
+
+        Args:
+            title (str): The title of the plot.
+            epochs_to_plot (Union[int, List[int], Dict[int, str], None]): Epoch(s) to plot. Can be a single epoch, 
+                                                                          a list of epochs, or a dictionary where keys 
+                                                                          are epochs. If None, plots all available epochs.
+
+        Returns:
+            None
+        """
+
+        if isinstance(epochs_to_plot, int):
+            epochs_to_plot = [epochs_to_plot]
+        elif isinstance(epochs_to_plot, dict):
+            epochs_to_plot = list(epochs_to_plot.keys())
+        elif epochs_to_plot is None:
+            epochs_to_plot = [col.split('_')[-1] for col in self.knn_data.columns if 'kNN(strain)' in col]
+
+        plt.figure(figsize=(7, 7))
+
+        strain = self.knn_data['strain']
+
+        for epoch in epochs_to_plot:
+            stress = self.knn_data[f'kNN(strain)_{epoch}']
+            plt.plot(strain, stress, label=f'kNN Epoch {epoch}', linestyle='-', linewidth=2)
+
+        plt.xlabel('Plastic Strain [-]', fontsize=16)
+        plt.ylabel('Yield Stress [MPa]', fontsize=16)
+        plt.title(f'kNN Model Prediction {title}', fontsize=16)
+        plt.legend(loc='lower right', fontsize=16)
+        plt.grid(True)
+        plt.xlim(left=0)
+        plt.ylim(bottom=0)
+        plt.gca().yaxis.get_major_ticks()[0].label1.set_visible(False)  # Remove the 0 label on y-axis
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.out_dir, 'kNN.png'), bbox_inches='tight')
+        plt.close()
+
+
+    def plot_filtered_elements(self, force_loss_df, filtered_elements_list):
+        total_surface_elements = len(self.element_dict)
+        percent_filtered = [len(elset) / total_surface_elements for elset in filtered_elements_list]
+
+        plt.plot(force_loss_df['displacement'], percent_filtered)
+        plt.xlabel('Displacement [mm]')
+        plt.ylabel('Percentage of filtered elements')
+        plt.savefig('filtered_elements_dynamic.png')
+
+        # Save the filtered elements list to a CSV file
+        pd.DataFrame(filtered_elements_list).to_csv('filtered_elements_dynamic.csv')
+
