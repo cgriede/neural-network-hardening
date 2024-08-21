@@ -2,40 +2,41 @@ import os
 import shutil
 import torch.optim as optim
 from utils import cleaner
+import train_functions as tf
 
 # Define parameters
 seeds = [37,]
 models = [#'SimpleModel',
-          'DeepModel',]
-clipping_rates = [5]
+          #'DeepModel',
+          'DeepSquareModel',
+          ]
+
+tf.StandardFilter
+tf.HeavyRegularization
+tf.LightRegularization
+tf.DirectionalRegularization
+tf.EnforceS33Direction
+tf.EnforceLight
 
 # Define specific combinations
 combinations = [
-    ('tf.MSE()', 'tf.StandardFilter', 0.001, 600),
-    ('tf.MSE()', 'tf.StandardFilter', 0.0005, 800),
-        
-    ('tf.MSE()', 'tf.HeavyRegularization', 0.001, 300),
-    ('tf.MSE()', 'tf.HeavyRegularization', 0.0005, 400),
+#optimizer , loss_inst, feature_selector, learning_rate, n_epochs, clipping_rate
+('optim.RMSprop',  'tf.MSE()', 'tf.HeavyRegularization',         0.001,     200, 5),
+('optim.RMSprop',  'tf.MSE()', 'tf.DirectionalRegularization',   0.001,     200, 5),
+('optim.RMSprop',  'tf.MSE()', 'tf.LightRegularization',         0.0005,    300, 5),
 
-    ('optim.RMSprop', 'tf.MSE()', 'LightRegularization', 0.001, 300),
+('optim.Adam',     'tf.MSE()', 'tf.EnforceLight',                0.001,     500, 15),
+('optim.Adam',     'tf.MSE()', 'tf.EnforceS33Direction',         0.001,     500, 15),
 
-    ('tf.MSE()', 'tf.EnforceS33Direction', 0.001, 600),
-    ('tf.MSE()', 'tf.EnforceS33Direction', 0.0005, 800),
-
-]
-
-video_combination = [
-    ('optim.RMSprop', 'tf.MSE()', 'tf.HeavyRegularization', 0.001, 300),
+('optim.Adam',     'tf.MSE()', 'tf.StandardFilter',              0.001,     600, 10),
 
 ]
 
-expected_number_tests = len(seeds)*len(models) * len(combinations) * len(clipping_rates)
-print(f"Expected number of tests: {expected_number_tests}")
 
 source_dir = os.getcwd()
 
 # Base directory for tests
-base_dir = 'ML_Video'
+base_dir = 'ML_Tests_DeepSquareModel'
 if os.path.exists(base_dir):
     shutil.rmtree(base_dir)
 os.makedirs(base_dir, exist_ok=True)
@@ -123,12 +124,11 @@ def create_test_dir(n_epochs, seed, model, optimizer, optimizer_type, clipping_r
                 shutil.copy2(src_path, dst_path)
 
 # Generate directories and scripts for each configuration
-config = video_combination
+config = combinations
 for seed in seeds:
     for model in models:
-        for optimizer, loss_inst, feature_selector, learning_rate, n_epochs in config:
+        for optimizer, loss_inst, feature_selector, learning_rate, n_epochs, clipping_rate in config:
             optimizer_type = optimizer.split('.')[1]
-            for clipping_rate in clipping_rates:
-                    create_test_dir(n_epochs, seed, model, optimizer, optimizer_type, clipping_rate, learning_rate, loss_inst, feature_selector)
+            create_test_dir(n_epochs, seed, model, optimizer, optimizer_type, clipping_rate, learning_rate, loss_inst, feature_selector)
 
 print("All tests generated successfully!")

@@ -54,7 +54,7 @@ class LowLossSearcher:
 
 def import_mat_tensor_from_csv(file_path):
     # Read the CSV file
-    mat_df = pd.read_csv(file_path, index_col=0)
+    mat_df = pd.read_csv(file_path,)
     
     # Identify the kNN(strain) column
     kNN_column = [col for col in mat_df.columns if col.startswith('kNN(strain)')][0]
@@ -91,44 +91,57 @@ def validator(mat_prop_tensor, working_directory, expname, run_simulation = True
 
     return df
 
+
+
+
 if __name__ == '__main__':
     start_dir = os.getcwd()
 
+    make_training_plots = False
+    validate_models = False
+    make_validation_plots = True
 
-    validate = True
-    if validate:
-        validation_dirs = r"D:\Bachelor_Thesis_Cedric_Grieder\results\20240818\low_loss"
-        dirs_to_validate = [dir for dir in os.listdir(validation_dirs)]
-        os.chdir(start_dir)
-        archive_directory = 'validation'
-        working_directory = os.path.join(archive_directory, 'work')
-        kNN_file = r"D:\Bachelor_Thesis_Cedric_Grieder\Code\testing\Merge\neural-network-hardening\validation\kNN\0815_500RMS_Deep_LR001_MSE.csv"
-        mat_tensor = import_mat_tensor_from_csv(kNN_file)
-        expnames = [
-            #'C_20',
-            'H_50',
-            ]
-        
-        force_loss_df = validator(mat_prop_tensor=mat_tensor, working_directory= working_directory, expname = 'H_50', run_simulation = True, num_cpus = 4)
-        summary_writer = ut.TestrunSummaryWriter(archive_directory= archive_directory, working_directory= working_directory, validation=True,)
-        summary_writer.validation_summary(title = '0815_500RMS_Deep_LR001_MSE', loss_df= force_loss_df)
-        searcher = LowLossSearcher()
-        lowest_loss_dirs = []
-        kNNs = []
-        run_names = []
+    if make_training_plots:
+        _i_o_dir = r"D:\Bachelor_Thesis_Cedric_Grieder\presentation\Presentation_material_models"
+        for selector_name in os.listdir(_i_o_dir):
+            print(f'Processing {selector_name}')
+            selector_path = os.path.join(_i_o_dir, selector_name)
+            for model_name in os.listdir(selector_path):
+                print(f'Processing {model_name}')
+                model_dir = os.path.join(selector_path, model_name)
+                for epoch_dir in os.listdir(model_dir):
+                    low_loss_epoch_dir = os.path.join(model_dir, epoch_dir)
+                    title_force = f'Force Comparison {model_name} {selector_name}'
+                    kNN_title = f'kNN {model_name} {selector_name}'
+                    k_nn_CSV = os.path.join(low_loss_epoch_dir, 'kNN_master.csv')
+                    force_loss_csv = os.path.join(low_loss_epoch_dir, 'force_comparison.csv')
+                    output_dir = os.path.join(low_loss_epoch_dir, 'output')
+                    plotter = ut.PlotGenerator(output_dir)
+                    plotter.force_plot(force_loss_csv, title_force)
+                    plotter.kNN_plot(k_nn_CSV, kNN_title)
 
-        for dir in dirs_to_validate:
-            break
-            run_names.append((dir.split('\\'))[-1])
-            searcher.process_models_directory(os.path.join(validation_dirs, dir))
-            lowest_loss_dirs.append(searcher.lowest_loss_dir)
-            if 'kNN_master.csv' in os.listdir(searcher.lowest_loss_dir):
-                kNNs.append(os.path.join(searcher.lowest_loss_dir, 'kNN_master.csv'))
+                    working_directory = os.makedirs(os.path.join(_i_o_dir, selector_name, model_name, low_loss_epoch_dir, 'work'), exist_ok=True)
+                    archive_directory = os.makedirs(os.path.join(_i_o_dir, selector_name, model_name, low_loss_epoch_dir, 'output'), exist_ok=True)
 
-        for expname in expnames:
-            break
-            for kNN in kNNs:
-                mat_tensor = import_mat_tensor_from_csv(kNN)
-            force_loss_df = validator(mat_prop_tensor=mat_tensor, working_directory= working_directory, expname = expname, run_simulation = True, num_cpus = 4)
-            summary_writer = ut.TestrunSummaryWriter(archive_directory= archive_directory, working_directory= working_directory, validation=True,)
-            summary_writer.validation_summary(title = '0815_500RMS_Deep_LR001_MSE', loss_df= force_loss_df)
+
+    expnames = [
+    'C_20',
+    'H_50',
+    ]
+    if validate_models:
+        validation_knn_dir = r"D:\Bachelor_Thesis_Cedric_Grieder\Code\testing\Merge\neural-network-hardening\validation\kNN"
+        for kNN_csv in os.listdir(validation_knn_dir):
+            mat_tensor = import_mat_tensor_from_csv(os.path.join(validation_knn_dir, kNN_csv))
+            working_directory = r"D:\Bachelor_Thesis_Cedric_Grieder\Code\testing\Merge\neural-network-hardening\validation\work"
+            for expname in expnames:
+                force_loss_df = validator(mat_prop_tensor=mat_tensor, working_directory= working_directory, expname = expname, run_simulation = True, num_cpus = 4)
+                out_dir = os.path.join(working_directory, f'{expname}{kNN_csv}_force_comparison.csv')
+                force_loss_df.to_csv(out_dir, index=False)
+    force_csv_dir = r"D:\Bachelor_Thesis_Cedric_Grieder\Code\testing\Merge\neural-network-hardening\validation\force_csv"
+    if make_validation_plots:
+        for force_csv in os.listdir(force_csv_dir):
+            force_csv_path = os.path.join(force_csv_dir, force_csv)
+            plotter = ut.PlotGenerator(force_csv_dir)
+            filename = force_csv.split('.')[0]
+            plotter.force_plot(force_csv_path, filename, filename)
+

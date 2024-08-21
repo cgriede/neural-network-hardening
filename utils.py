@@ -1411,49 +1411,6 @@ class TestrunSummaryWriter:
         plot_df.to_csv(os.path.join(self.out_dir, 'force_comparison.csv'), index=False)
 
 
-    def old_kNN_plt(self, title: str = '', epochs_to_plot: Union[int, dict, None] = None) -> None:
-        """
-        Plots the kNN model predictions for specified epochs and saves the plot and data to files.
-
-        Args:
-            epochs_to_plot (Union[int, List[int], None]): Epoch(s) to plot. Can be a single epoch, a list of epochs, or None.
-                                                        If None, plots the epochs specified in self.epochs_to_plot.
-
-        Returns:
-            None
-        """
-
-        if isinstance(epochs_to_plot, int):
-            epochs_to_plot = [epochs_to_plot]
-        elif isinstance(epochs_to_plot, dict):
-            epochs_to_plot = list(epochs_to_plot.keys())
-
-        # Initialize master_df with strain values as the index if strain is constant across epochs
-        key = list(self.mat_tensor_dict.keys())[0]
-        strain = list(self.mat_tensor_dict[key][:, 1].detach().numpy())  # Assuming the first tensor's strain values are representative
-        master_df = pd.DataFrame(strain, columns=['strain'])
-
-        # Generate plot of the kNN model prediction and save to df
-        for epoch, mat_tensor in self.mat_tensor_dict.items():
-            stress = list(mat_tensor[:, 0].detach().numpy())
-
-            # Plot specified epochs
-            if epoch in epochs_to_plot:
-                plt.plot(strain, stress, label=f'kNN Epoch {epoch + 1}', color=self.color_picker(epoch))
-                # Adding columns to the master_df
-                new_column = pd.DataFrame(stress, columns=[f'kNN(strain)_{epoch + 1}'])
-                master_df = pd.concat([master_df, new_column], axis=1)
-
-        # Write data to csv        
-        master_df.to_csv(os.path.join(self.out_dir, 'kNN_master.csv'))
-
-        plt.xlabel('Plastic Strain [-]')
-        plt.ylabel('Yield Stress [MPa]')
-        plt.title(f'kNN (Model Prediction) {title}')
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        plt.savefig(os.path.join(self.out_dir, f'kNN.png'), bbox_inches='tight')
-        plt.close()
-
     def kNN_plt(self, title: str = '', epochs_to_plot: Union[int, List[int], dict, None] = None) -> None:
         """
         Plots the kNN model predictions for specified epochs and saves the plot and data to files.
@@ -1498,7 +1455,7 @@ class TestrunSummaryWriter:
         # Plot styling
         plt.xlabel('Plastic Strain [-]', fontsize=16)
         plt.ylabel('Yield Stress [MPa]', fontsize=16)
-        plt.title(f'kNN Model Prediction Epoch 150 {title}', fontsize=16)
+        plt.title(f'kNN Model Prediction{title}', fontsize=16)
         plt.legend(loc='lower right', fontsize=16)
         plt.grid(True)
         plt.xlim(left=0)
@@ -1811,116 +1768,122 @@ def evaluate_data_failed_job(file_path):
     return df
 
 
+import matplotlib.pyplot as plt
+import pandas as pd
+import os
+import numpy as np
+
 class PlotGenerator:
-    def __init__(self, force_csv: str, knn_csv: str, output_dir: str):
+    def __init__(self, output_dir: str):
         """
-        Initialize the PlotGenerator class with paths to the CSV files and output directory.
+        Initialize the PlotGenerator class with the output directory.
+
+        Args:
+            output_dir (str): Directory where the plots and processed data will be saved.
+        """
+        self.out_dir = output_dir
+        os.makedirs(self.out_dir, exist_ok=True)
+        self.fontsize = 20
+
+    def force_plot(self, force_csv: str, filename:str = '' , title: str = '') -> None:
+        """
+        Plots the experimental and simulated forces and saves the plot and data to files.
 
         Args:
             force_csv (str): Path to the CSV file containing force comparison data.
-            knn_csv (str): Path to the CSV file containing kNN prediction data.
-            output_dir (str): Directory where the plots and processed data will be saved.
-        """
-        self.force_data = pd.read_csv(force_csv)
-        self.knn_data = pd.read_csv(knn_csv)
-        self.out_dir = output_dir
-        os.makedirs(self.out_dir, exist_ok=True)
-
-    def force_plot(self, title: str = '', epochs_to_plot: Union[int, List[int], dict, None] = None) -> None:
-        """
-        Plots the experimental and simulated forces for specified epochs and saves the plot and data to files.
-
-        Args:
             title (str): The title of the plot.
-            epochs_to_plot (Union[int, List[int], Dict[int, str], None]): Epoch(s) to plot. Can be a single epoch, 
-                                                                          a list of epochs, or a dictionary where keys 
-                                                                          are epochs. If None, plots all available epochs.
 
         Returns:
             None
         """
+        # Load the data
+        force_data = pd.read_csv(force_csv)
 
-        if isinstance(epochs_to_plot, int):
-            epochs_to_plot = [epochs_to_plot]
-        elif isinstance(epochs_to_plot, dict):
-            epochs_to_plot = list(epochs_to_plot.keys())
-        elif epochs_to_plot is None:
-            epochs_to_plot = [col.split('_')[-1] for col in self.force_data.columns if 'force_sim' in col]
+        # Extract data
+        displacement = force_data['displacement']
+        force_target = force_data['force_target']
+        # Dynamically find the column that starts with 'force_sim'
+        force_sim_column = [col for col in force_data.columns if col.startswith('force_sim')]
+        if len(force_sim_column) == 0:
+            raise KeyError("No column starting with 'force_sim' found.")
+        force_sim = force_data[force_sim_column[0]]
+        # Calculate the metrics
+        mae = np.mean(np.abs(force_target - force_sim))
+        epsilon = np.finfo(float).eps  # Small value to avoid division by 0
+        mape = np.mean(np.abs((force_target - force_sim) / (epsilon + force_target)) * 100)
+        mse = np.mean((force_target - force_sim) ** 2)
 
-        plt.figure(figsize=(7, 7))
+        # Plot the experimental and simulated forces
+        plt.figure(figsize=(8, 8))
+        plt.plot(displacement, force_target, label='Experimental Force', color='red', linewidth=2)
+        plt.plot(displacement, force_sim, label='Simulated Force', linestyle='--', linewidth=2)
 
-        displacement = self.force_data['displacement']
-        force_target = self.force_data['force_target']
+        fontsize = self.fontsize
 
-        plt.plot(displacement, force_target, label='Experimental Force', color='red', marker='x', linewidth=2)
+        # Add the metrics to the plot in a text box
+        metrics_text = f"MAE: {mae:.2f} N\nMAPE: {mape:.2f}%\nMSE: {mse:.2f} N^2"
+        plt.text(0.95, 0.05, metrics_text, fontsize=fontsize, verticalalignment='bottom', horizontalalignment='right', 
+                 transform=plt.gca().transAxes, bbox=dict(facecolor='white', alpha=0.5, edgecolor='black'))
 
-        for epoch in epochs_to_plot:
-            force_sim = self.force_data[f'force_sim_{epoch}']
-            plt.plot(displacement, force_sim, label=f'Simulated Force, Epoch {epoch}', linestyle='--', linewidth=2)
+        # Adjust the axis labels, title, and tick labels to have the same size
+        plt.xlabel('Displacement [mm]', fontsize= fontsize)
+        plt.ylabel('Force [N]', fontsize= fontsize)
+        plt.title(f'{title}', fontsize= fontsize)
+        plt.xticks(fontsize= fontsize)
+        plt.yticks(fontsize= fontsize)
 
-        plt.xlabel('Displacement [mm]', fontsize=16)
-        plt.ylabel('Force [N]', fontsize=16)
-        plt.title(f'Target and Simulated Forces Over Displacement {title}', fontsize=16)
-        plt.legend(loc='upper left', fontsize=16)
+        plt.legend(loc='upper left', fontsize= fontsize)
         plt.grid(True)
         plt.xlim(left=0)
         plt.ylim(bottom=0)
         plt.gca().yaxis.get_major_ticks()[0].label1.set_visible(False)  # Remove the 0 label on y-axis
         plt.tight_layout()
-        plt.savefig(os.path.join(self.out_dir, 'Force_Comparison.png'), bbox_inches='tight')
+
+        # Save the plot
+        savepath = os.path.join(self.out_dir, f'{filename}Force_Comparison.png')
+        plt.savefig(savepath, bbox_inches='tight')
         plt.close()
 
-    def kNN_plot(self, title: str = '', epochs_to_plot: Union[int, List[int], dict, None] = None) -> None:
+    def kNN_plot(self, knn_csv: str, title: str = '') -> None:
         """
-        Plots the kNN model predictions for specified epochs and saves the plot and data to files.
+        Plots the kNN model predictions and saves the plot and data to files.
 
         Args:
+            knn_csv (str): Path to the CSV file containing kNN prediction data.
             title (str): The title of the plot.
-            epochs_to_plot (Union[int, List[int], Dict[int, str], None]): Epoch(s) to plot. Can be a single epoch, 
-                                                                          a list of epochs, or a dictionary where keys 
-                                                                          are epochs. If None, plots all available epochs.
 
         Returns:
             None
         """
+        # Load the kNN data
+        knn_data = pd.read_csv(knn_csv)
 
-        if isinstance(epochs_to_plot, int):
-            epochs_to_plot = [epochs_to_plot]
-        elif isinstance(epochs_to_plot, dict):
-            epochs_to_plot = list(epochs_to_plot.keys())
-        elif epochs_to_plot is None:
-            epochs_to_plot = [col.split('_')[-1] for col in self.knn_data.columns if 'kNN(strain)' in col]
+        # Extract strain and stress data
+        strain = knn_data['strain']
+        knn_column = [col for col in knn_data.columns if col.startswith('kNN(strain)')]
+        if len(knn_column) == 0:
+            raise KeyError("No column starting with 'kNN(strain)' found.")
+        stress = knn_data[knn_column[0]]
+        # Plot the kNN model predictions
+        plt.figure(figsize=(8, 8))
+        plt.plot(strain, stress, label='kNN Prediction', linestyle='-', linewidth=2)
 
-        plt.figure(figsize=(7, 7))
-
-        strain = self.knn_data['strain']
-
-        for epoch in epochs_to_plot:
-            stress = self.knn_data[f'kNN(strain)_{epoch}']
-            plt.plot(strain, stress, label=f'kNN Epoch {epoch}', linestyle='-', linewidth=2)
-
-        plt.xlabel('Plastic Strain [-]', fontsize=16)
-        plt.ylabel('Yield Stress [MPa]', fontsize=16)
-        plt.title(f'kNN Model Prediction {title}', fontsize=16)
-        plt.legend(loc='lower right', fontsize=16)
+        fontsize = self.fontsize
+        # Plot styling
+        plt.xlabel('Plastic Strain [-]', fontsize=fontsize)
+        plt.ylabel('Yield Stress [MPa]', fontsize=fontsize)
+        plt.title(f'{title}', fontsize=fontsize)
+        plt.xticks(fontsize=fontsize)
+        plt.yticks(fontsize=fontsize)
+        plt.legend(loc='lower right', fontsize=fontsize)
         plt.grid(True)
         plt.xlim(left=0)
         plt.ylim(bottom=0)
         plt.gca().yaxis.get_major_ticks()[0].label1.set_visible(False)  # Remove the 0 label on y-axis
         plt.tight_layout()
+
+        # Save the plot
         plt.savefig(os.path.join(self.out_dir, 'kNN.png'), bbox_inches='tight')
         plt.close()
 
-
-    def plot_filtered_elements(self, force_loss_df, filtered_elements_list):
-        total_surface_elements = len(self.element_dict)
-        percent_filtered = [len(elset) / total_surface_elements for elset in filtered_elements_list]
-
-        plt.plot(force_loss_df['displacement'], percent_filtered)
-        plt.xlabel('Displacement [mm]')
-        plt.ylabel('Percentage of filtered elements')
-        plt.savefig('filtered_elements_dynamic.png')
-
-        # Save the filtered elements list to a CSV file
-        pd.DataFrame(filtered_elements_list).to_csv('filtered_elements_dynamic.csv')
 
